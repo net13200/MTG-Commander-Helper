@@ -92,30 +92,49 @@
     return { name: data.name || "", commanders: commanders.map((c) => c.n), cards: [...commanders, ...main] };
   }
 
-  // Moxfield has no official public API and its Cloudflare protection blocks
-  // browsers, so a direct call usually fails. The reliable route is a small
-  // proxy that fetches server-side and answers GET {proxy}/moxfield/decks/{id}
-  // (the same contract as Mulligan's proxy-server.py; see proxy/ in this repo).
-  async function importMoxfield(input, proxy) {
+  // Moxfield has no official public API, and it doesn't let other sites read
+  // its decks (CORS plus Cloudflare), so this direct call is expected to fail
+  // from the app. It is still tried in case that ever changes; the app then
+  // falls back to the clipboard flow or the bookmarklet below.
+  async function importMoxfield(input) {
     const id = moxfieldId(input);
     if (!id) throw new Error("badUrl");
-    const urls = [];
-    if (proxy) urls.push(proxy.replace(/\/+$/, "") + "/moxfield/decks/" + encodeURIComponent(id));
-    urls.push(MOXFIELD_API + encodeURIComponent(id));
-    let notFound = false;
-    for (const url of urls) {
-      try {
-        const r = await fetch(url, { headers: { Accept: "application/json" } });
-        if (r.status === 404) notFound = true;
-        if (!r.ok) continue;
-        const parsed = fromMoxfield(await r.json());
-        if (!parsed.cards.length) throw new Error("empty");
-        return { ...parsed, source: { type: "moxfield", id, url: "https://moxfield.com/decks/" + id } };
-      } catch (e) {
-        if (e.message === "empty") throw e;
-      }
+    let r;
+    try {
+      r = await fetch(MOXFIELD_API + encodeURIComponent(id), { headers: { Accept: "application/json" } });
+    } catch (e) {
+      throw new Error("blocked");
     }
-    throw new Error(notFound ? "notFound" : proxy ? "proxyFailed" : "blocked");
+    if (r.status === 404) throw new Error("notFound");
+    if (!r.ok) throw new Error("blocked");
+    const parsed = fromMoxfield(await r.json());
+    if (!parsed.cards.length) throw new Error("empty");
+    return { ...parsed, source: { type: "moxfield", id, url: "https://moxfield.com/decks/" + id } };
+  }
+
+  // A bookmarklet runs on moxfield.com itself, where Moxfield's own API is
+  // allowed, and hands the deck to the app in the URL fragment (#import=...).
+  // The fragment never reaches a server.
+  function bookmarklet(appUrl) {
+    const code = String.raw`(async()=>{const m=location.pathname.match(/\/decks\/([\w-]+)/);if(!location.hostname.endsWith("moxfield.com")||!m){alert("Open a deck on moxfield.com first, then tap this bookmark.");return}const u="https://api2.moxfield.com/v3/decks/all/"+m[1];let d;for(const c of ["omit","include"]){try{const r=await fetch(u,{credentials:c});if(r.ok){d=await r.json();break}}catch(e){}}if(!d){alert("Moxfield didn't return the deck. Use More > Export > Copy plain text and paste it in Commander Tracker instead.");return}const b=d.boards||{};const g=n=>Object.values((b[n]&&b[n].cards)||d[n]||{}).map(e=>[e.quantity||1,(e.card&&e.card.name)||e.name]);location.href=${JSON.stringify(appUrl)}+"#import="+encodeURIComponent(JSON.stringify({v:1,id:m[1],n:d.name||"",c:g("commanders"),m:g("mainboard")}))})()`;
+    return "javascript:" + encodeURIComponent(code).replace(/%2F/g, "/").replace(/%3A/g, ":");
+  }
+
+  // Reads the #import= payload the bookmarklet sends.
+  function fromFragment(hash) {
+    const m = String(hash || "").match(/^#import=(.+)$/);
+    if (!m) return null;
+    try {
+      const p = JSON.parse(decodeURIComponent(m[1]));
+      const toCards = (list) => (Array.isArray(list) ? list : []).filter((e) => Array.isArray(e) && e[1]).map(([q, n]) => ({ q: Number(q) || 1, n: String(n) }));
+      const commanders = toCards(p.c);
+      const cards = [...commanders, ...toCards(p.m)];
+      if (!cards.length) return null;
+      const id = typeof p.id === "string" && /^[\w-]+$/.test(p.id) ? p.id : null;
+      return { name: String(p.n || ""), commanders: commanders.map((c) => c.n), cards, source: id ? { type: "moxfield", id, url: "https://moxfield.com/decks/" + id } : null };
+    } catch (e) {
+      return null;
+    }
   }
 
   // ---------- Scryfall ----------
@@ -136,14 +155,23 @@
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // Resolves names in batches of 75 (Scryfall's limit), politely spaced.
-  async function fetchCards(names) {
+  // Resolves names from the local card cache first, then asks Scryfall for the
+  // rest in batches of 75 (its limit), politely spaced. New cards are written
+  // into `cache` (a plain object kept on the device) so checks work offline.
+  async function fetchCards(names, cache) {
+    cache = cache || {};
     const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
     const found = new Map();
     const notFound = [];
-    for (let i = 0; i < unique.length; i += 75) {
+    const missing = [];
+    for (const n of unique) {
+      const hit = cache[n.toLowerCase()];
+      if (hit) found.set(n.toLowerCase(), hit);
+      else missing.push(n);
+    }
+    for (let i = 0; i < missing.length; i += 75) {
       if (i) await wait(120);
-      const batch = unique.slice(i, i + 75);
+      const batch = missing.slice(i, i + 75);
       const r = await fetch(SCRYFALL + "/cards/collection", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -153,12 +181,14 @@
       const j = await r.json();
       for (const c of j.data || []) {
         const s = summarize(c);
-        found.set(c.name.toLowerCase(), s);
-        for (const f of c.card_faces || []) found.set(f.name.toLowerCase(), s);
+        for (const key of [c.name, ...(c.card_faces || []).map((f) => f.name)]) {
+          found.set(key.toLowerCase(), s);
+          cache[key.toLowerCase()] = s;
+        }
       }
       for (const nf of j.not_found || []) if (nf.name) notFound.push(nf.name);
     }
-    return { found, notFound };
+    return { found, notFound, fetched: missing.length };
   }
 
   async function autocomplete(q) {
@@ -294,6 +324,6 @@
     return ["W", "U", "B", "R", "G"].filter((x) => all.has(x)).join("");
   }
 
-  CT.Decks = { parseList, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
+  CT.Decks = { parseList, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
   if (typeof module !== "undefined") module.exports = CT.Decks;
 })(typeof window !== "undefined" ? window : globalThis);

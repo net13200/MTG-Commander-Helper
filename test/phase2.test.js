@@ -128,3 +128,35 @@ test("recap tells the story of a tracked game", () => {
   assert.equal(lines[lines.length - 1], "📝 gg");
   assert.deepEqual(recap({ seats: m.seats, winnerSeat: null, events: [] }, say).slice(-1), ["rc_draw"]);
 });
+
+test("bookmarklet is valid JavaScript and its payload round-trips", () => {
+  const b = Decks.bookmarklet("https://example.org/app/");
+  assert.ok(b.startsWith("javascript:"));
+  new Function(decodeURIComponent(b.slice("javascript:".length)));
+  const frag = "#import=" + encodeURIComponent(JSON.stringify({ v: 1, id: "x-1", n: "Deck", c: [[1, "Cmd"]], m: [[2, "Forest"]] }));
+  const d = Decks.fromFragment(frag);
+  assert.deepEqual(d.commanders, ["Cmd"]);
+  assert.deepEqual(d.cards, [{ q: 1, n: "Cmd" }, { q: 2, n: "Forest" }]);
+  assert.equal(d.source.url, "https://moxfield.com/decks/x-1");
+  assert.equal(Decks.fromFragment("#import=%7Bbroken"), null);
+  assert.equal(Decks.fromFragment("#other"), null);
+});
+
+test("card lookups come from the local cache before Scryfall", async () => {
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    const names = JSON.parse(opts.body).identifiers.map((i) => i.name);
+    calls.push(names);
+    return { ok: true, json: async () => ({ data: names.filter((n) => n !== "Nope").map((name) => ({ name, color_identity: [], legalities: { commander: "legal" } })), not_found: names.includes("Nope") ? [{ name: "Nope" }] : [] }) };
+  };
+  const cache = {};
+  const first = await Decks.fetchCards(["Sol Ring", "Forest", "Nope"], cache);
+  assert.equal(first.fetched, 3);
+  assert.deepEqual(first.notFound, ["Nope"]);
+  assert.ok(cache["sol ring"]);
+  const second = await Decks.fetchCards(["Sol Ring", "Forest"], cache);
+  assert.equal(second.fetched, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(second.found.size, 2);
+  delete global.fetch;
+});

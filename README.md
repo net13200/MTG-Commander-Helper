@@ -29,7 +29,7 @@ Opening `index.html` directly also works, but offline install needs it served ov
 
 ## Phase 2 (group layer)
 
-- **Deck import**: paste an export from Moxfield, Archidekt or any site (always works), or import a Moxfield link through the import proxy (below).
+- **Deck import**: paste an export from Moxfield, Archidekt or any site, paste straight from the clipboard, or send a deck from Moxfield with the one-tap bookmark (below).
 - **Deck check** against Scryfall: card count, banned or not-legal cards, cards outside the color identity, Game Changers (Scryfall's flag), mass land denial, extra turns, tutors and well-known two-card combos (a partial list), plus an **estimated bracket** with the reasons. It's labeled as an estimate; the owner sets the final bracket.
 - **Deck versions**: when a list changes it becomes a new version, and saved games stay linked to the version that was played.
 - **Commander art on tiles** from Scryfall, cached for offline play (can be turned off in Settings).
@@ -38,14 +38,14 @@ Opening `index.html` directly also works, but offline install needs it served ov
 - **Game recaps**: a short story of each game from its log (swing round, first knockout, comeback, kingmaker, notes), shareable to WhatsApp.
 - **Seasons**: calendar quarters with standings and an awards screen (champion, most damage, most knockouts, best deck); stats can be filtered by season.
 
-### Moxfield import proxy
+### Importing from Moxfield
 
-Moxfield has no official public API, and its Cloudflare protection blocks requests coming straight from a browser. URL import therefore goes through a small proxy that answers `GET /moxfield/decks/{id}`. That's the same contract as `proxy-server.py` in [Mulligan](https://github.com/net13200/Mulligan), so either proxy works. Two options are in `proxy/`:
+Moxfield has no official public API and doesn't let other sites read its decks, so the app can't fetch a deck by link on its own. There are two ways in, both without any proxy or server:
 
-- `moxfield-proxy.py`: run it on a computer (`pip install requests`, then `python3 proxy/moxfield-proxy.py`) and set **Settings → Moxfield import proxy** to `http://localhost:3001` in the app on that computer.
-- `cloudflare-worker.js`: deploy it as a free Cloudflare Worker and use its `https://….workers.dev` URL on phones and tablets. Moxfield may still refuse requests from Workers; if so, use the Python proxy or paste the list.
+- **Paste from clipboard**: paste the deck link and tap Import. The app opens the deck on Moxfield; there, tap **More → Export → Copy plain text**, come back and tap **Paste from clipboard**.
+- **One-tap bookmark**: in **Settings → One-tap Moxfield import**, add the "Send to Commander Tracker" bookmark (drag it to the bookmarks bar, or copy its code into a bookmark on a phone). On a Moxfield deck page, tap it: it reads the deck on Moxfield's own page and opens it in the app through the URL fragment (`#import=…`), which never reaches a server. On iPhone/iPad it opens in Safari, which keeps its data apart from the Home Screen app, so use the clipboard there.
 
-Without a proxy, use Moxfield's **More → Export → Copy plain text** and paste it into the decklist.
+Everything is saved on the device: decks, games and the Scryfall card data used by deck checks (so checks work offline). Each deck can also be saved as a `.txt` decklist.
 
 ## Not yet (later phases in the PRD)
 

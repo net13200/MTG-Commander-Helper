@@ -414,3 +414,13 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---------- Moxfield import ---------- */
+
+.steps { padding: 12px; border-radius: 12px; background: var(--surface-2); font-size: 0.9rem; }
+.steps p { margin: 0 0 6px; }
+.steps ol { margin: 0 0 6px; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 8px; }
+.steps .btn { vertical-align: middle; }
+.linkish { background: none; border: none; padding: 0; color: var(--accent); font-weight: 600; text-decoration: underline; }
+.howto { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.4; }
+#bmCode { font-family: ui-monospace, monospace; font-size: 0.75rem; }

@@ -519,6 +519,7 @@
       `<h2>${d.id ? t("editDeck") : t("addDeck")} <small class="muted">${esc(owner ? owner.name : "")}</small></h2>
       <form class="field" data-submit="moxImport"><span>${t("importMoxfield")}</span>
         <div class="inline"><input id="dMox" inputmode="url" placeholder="https://moxfield.com/decks/…" value="${esc(d.moxUrl || (d.source && d.source.url) || "")}" autocomplete="off"><button class="btn" ${d.importing ? "disabled" : ""}>${d.importing ? "…" : t("import")}</button></div></form>
+      ${d.moxStep ? moxSteps(d) : ""}
       ${d.importMsg ? `<p class="${d.importOk ? "okmsg" : "warn"}">${d.importMsg}</p>` : ""}
       <label class="field"><span>${t("commander")}</span><input id="dC1" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[0] || "")}" autocomplete="off" placeholder="${t("searchScryfall")}"></label>
       <label class="field"><span>${t("partner")}</span><input id="dC2" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[1] || "")}" autocomplete="off" placeholder="${t("optional")}"></label>
@@ -527,17 +528,66 @@
       <label class="field"><span>${t("deckName")}</span><input id="dName" value="${esc(d.name)}" maxlength="40" placeholder="${esc(d.commanders[0] || "")}" autocomplete="off"></label>
       <div class="field"><span>${t("colorIdentity")}</span><div class="chips">${MANA.map((c) => `<button class="mana ${d.colors.includes(c) ? "on" : ""}" data-action="dColor" data-v="${c}"><i class="pip pip-${c}"></i></button>`).join("")}</div></div>
       <label class="field"><span>${t("decklist")} <small class="muted">${t("decklistHint")}</small></span><textarea id="dList" rows="6" placeholder="1 Sol Ring&#10;1 Arcane Signet&#10;…">${esc(d.list || "")}</textarea></label>
-      <button class="btn" data-action="checkDeck" ${d.checking ? "disabled" : ""}>🔍 ${t("checkDeck")}</button>
+      <div class="actions"><button class="btn" data-action="pasteClipboard">📋 ${t("pasteClipboard")}</button><button class="btn" data-action="checkDeck" ${d.checking ? "disabled" : ""}>🔍 ${t("checkDeck")}</button></div>
       ${checkHtml(d)}
       <label class="field"><span>${t("bracket")} <small class="muted">${t("bracketHint")}</small></span><select id="dBracket"><option value="">—</option>${[1, 2, 3, 4, 5]
         .map((b) => `<option value="${b}" ${d.bracket === b ? "selected" : ""}>${b}</option>`)
         .join("")}</select></label>
       ${d.version ? `<p class="muted small">${t("deckVersion", { v: d.version, date: fmtDate((d.versions || []).slice(-1)[0] ? d.versions.slice(-1)[0].at : Date.now()) })}</p>` : ""}
-      <div class="actions">${d.id ? `<button class="btn danger" data-action="deckDelete">${t("delete")}</button>` : ""}<span class="grow"></span>
+      <div class="actions">${d.id ? `<button class="btn danger" data-action="deckDelete">${t("delete")}</button>` : ""}<button class="btn" data-action="saveDeckTxt">⬇ ${t("saveTxt")}</button><span class="grow"></span>
         <button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="deckSave">${t("save")}</button></div>`
     );
     const m = modalRoot.querySelector(".modal");
     if (m) m.scrollTop = scroll;
+  }
+
+  function moxSteps(d) {
+    const id = Decks.moxfieldId(d.moxUrl);
+    const link = id ? "https://moxfield.com/decks/" + id : "https://moxfield.com";
+    return `<div class="steps">
+      <p>${t("moxStepIntro")}</p>
+      <ol>
+        <li><a class="btn small" href="${esc(link)}" target="_blank" rel="noopener">${t("openOnMoxfield")} ↗</a> ${t("moxStepExport")}</li>
+        <li>${t("moxStepBack")} <button class="btn small primary" data-action="pasteClipboard">📋 ${t("pasteClipboard")}</button></li>
+      </ol>
+      <p class="muted small">${t("moxStepOneTap")} <button class="linkish" data-action="nav" data-to="settings">${t("settings")} ›</button></p>
+    </div>`;
+  }
+
+  function download(name, text, type) {
+    const blob = new Blob([text], { type: type || "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function appUrl() {
+    return location.origin + location.pathname;
+  }
+
+  // A deck handed over by the bookmarklet (#import=...) waits here until
+  // someone says whose deck it is.
+  function takeFragment() {
+    const incoming = Decks.fromFragment(location.hash);
+    if (!location.hash.startsWith("#import=")) return;
+    history.replaceState(null, "", location.pathname + location.search);
+    if (!incoming) return toast(t("importFailed"));
+    ui.incoming = incoming;
+    if (ui.view === "game") ui.view = "home";
+    render();
+    openModal(
+      `<h2>📥 ${t("incomingTitle", { name: incoming.name || incoming.commanders[0] || "" })}</h2>
+      <p class="muted small">${t("incomingHint", { n: incoming.cards.reduce((sum, c) => sum + c.q, 0) })}</p>
+      <div class="chips">${S.players
+        .filter((p) => !p.guest)
+        .map((p) => `<button class="chip" data-action="incomingFor" data-id="${p.id}">${avatar(p)}${esc(p.name)}</button>`)
+        .join("")}<button class="chip" data-action="incomingFor" data-id="">+ ${t("addPlayer")}</button></div>`,
+      "small"
+    );
   }
 
   function readDeckForm() {
@@ -559,14 +609,15 @@
     d.checking = true;
     deckModal();
     try {
-      const { found } = await Decks.fetchCards(parsed.cards.map((c) => c.n).concat(d.commanders));
+      const { found, fetched } = await Decks.fetchCards(parsed.cards.map((c) => c.n).concat(d.commanders), Store.cardCache);
+      if (fetched) Store.saveCards();
       if (!d.colors) d.colors = Decks.colorsOf(d.commanders, found);
       const lead = d.commanders[0] && found.get(d.commanders[0].toLowerCase());
       if (lead && lead.art) d.art = lead.art;
       d.analysis = Decks.analyze(parsed.cards, d.commanders, d.colors, found);
       d.analysis.fp = Decks.fingerprint(parsed.cards);
     } catch (e) {
-      toast(t("scryfallFailed"));
+      toast(navigator.onLine ? t("scryfallFailed") : t("needOnline"));
     }
     d.checking = false;
     if (ui.deck === d && $("#dName")) {
@@ -820,9 +871,15 @@
         <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
         ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}
       </section>
-      <section><h2>${t("deckImport")}</h2>
-        <label class="field"><span>${t("moxProxy")}</span><input value="${esc(st.moxProxy || "")}" placeholder="https://….workers.dev" inputmode="url" autocomplete="off" data-change="moxProxy"></label>
-        <p class="muted small">${t("moxProxyHint")}</p>
+      <section><h2>⭐ ${t("oneTapTitle")}</h2>
+        <p class="small">${t("oneTapIntro")}</p>
+        <div class="actions"><a class="btn primary" href="${esc(Decks.bookmarklet(appUrl()))}" draggable="true">⭐ ${t("bookmarkletName")}</a><button class="btn" data-action="copyBookmarklet">📋 ${t("copyCode")}</button></div>
+        <textarea id="bmCode" rows="3" readonly hidden>${esc(Decks.bookmarklet(appUrl()))}</textarea>
+        <ol class="small howto"><li>${t("oneTapDesktop")}</li><li>${t("oneTapMobile")}</li><li>${t("oneTapUse")}</li></ol>
+        <p class="muted small">${t("oneTapIos")}</p>
+      </section>
+      <section><h2>${t("cardCache")}</h2><p class="muted small">${t("cardCacheHint", { n: Object.keys(Store.cardCache).length })}</p>
+        <div class="actions"><button class="btn" data-action="clearCards" ${Object.keys(Store.cardCache).length ? "" : "disabled"}>${t("clearCache")}</button></div>
       </section>
       <section><h2>${t("backup")}</h2><p class="muted small">${t("backupHint")}</p>
         <div class="actions"><button class="btn" data-action="exportData">⬇ ${t("export")}</button>
@@ -1303,9 +1360,106 @@
     },
     checkDeck: () => {
       readDeckForm();
-      if (!navigator.onLine) return toast(t("needOnline"));
       runCheck(ui.deck);
     },
+    pasteClipboard: async () => {
+      readDeckForm();
+      const d = ui.deck;
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (e) {
+        text = "";
+      }
+      if (!text.trim()) {
+        const ta = $("#dList");
+        if (ta) ta.focus();
+        return toast(t("pasteManually"));
+      }
+      const parsed = Decks.parseList(text);
+      if (!parsed.cards.length) return toast(t("clipboardNoDeck"));
+      d.list = text;
+      if (parsed.commanders.length) d.commanders = parsed.commanders.slice(0, 2);
+      const id = Decks.moxfieldId(d.moxUrl);
+      if (id) d.source = { type: "moxfield", id, url: "https://moxfield.com/decks/" + id };
+      d.colors = "";
+      d.moxStep = false;
+      d.importOk = true;
+      d.importMsg = t("importedN", { n: parsed.cards.reduce((sum, c) => sum + c.q, 0) });
+      d.analysis = null;
+      await runCheck(d);
+    },
+    saveDeckTxt: () => {
+      readDeckForm();
+      const d = ui.deck;
+      const parsed = Decks.parseList(d.list);
+      const commanders = d.commanders.length ? d.commanders : parsed.commanders;
+      const cards = parsed.cards.slice();
+      for (const c of commanders) if (!cards.some((x) => x.n.toLowerCase() === c.toLowerCase())) cards.unshift({ q: 1, n: c });
+      if (!cards.length) return toast(t("needList"));
+      const name = (d.name || commanders[0] || "deck").replace(/[\\/:*?"<>|]+/g, " ").trim();
+      download(name + ".txt", Decks.toText(cards, commanders) + "\n");
+    },
+    incomingFor: (el) => {
+      const inc = ui.incoming;
+      if (!inc) return closeModal();
+      let ownerId = el.dataset.id;
+      if (!ownerId) {
+        const used = S.players.map((p) => p.color);
+        const p = {
+          id: Store.uid(),
+          name: I18n.raw("newPlayer") + " " + (S.players.filter((x) => !x.guest).length + 1),
+          color: COLORS.find((c) => !used.includes(c)) || COLORS[random(COLORS.length)],
+          avatar: AVATARS[random(AVATARS.length)],
+          guest: false,
+        };
+        S.players.push(p);
+        Store.save();
+        ownerId = p.id;
+      }
+      ui.incoming = null;
+      go("player", { id: ownerId });
+      ui.deck = {
+        id: null,
+        ownerId,
+        name: inc.name,
+        commanders: inc.commanders.slice(0, 2),
+        colors: "",
+        list: Decks.toText(inc.cards, inc.commanders),
+        bracket: null,
+        art: null,
+        warn: "",
+        analysis: null,
+        versions: [],
+        version: 0,
+        source: inc.source,
+        importOk: true,
+        importMsg: t("importedN", { n: inc.cards.reduce((sum, c) => sum + c.q, 0) }),
+      };
+      runCheck(ui.deck);
+    },
+    copyBookmarklet: async () => {
+      try {
+        await navigator.clipboard.writeText(Decks.bookmarklet(appUrl()));
+        toast(t("copied"));
+      } catch (e) {
+        const box = $("#bmCode");
+        if (box) {
+          box.hidden = false;
+          box.select();
+        }
+        toast(t("copyManually"));
+      }
+    },
+    clearCards: () =>
+      confirmModal(
+        t("confirmClearCards"),
+        () => {
+          Store.clearCards();
+          render();
+        },
+        t("clearCache")
+      ),
     useEstimate: () => {
       readDeckForm();
       ui.deck.bracket = ui.deck.analysis.estimate.bracket;
@@ -1549,10 +1703,6 @@
       Store.save();
       render();
     },
-    moxProxy: (el) => {
-      S.settings.moxProxy = el.value.trim();
-      Store.save();
-    },
     defaultLife: (el) => {
       S.settings.startingLife = clampLife(el.value);
       Store.save();
@@ -1595,12 +1745,11 @@
       readDeckForm();
       const d = ui.deck;
       if (!d.moxUrl) return;
-      if (!navigator.onLine) return toast(t("needOnline"));
       d.importing = true;
       d.importMsg = "";
       deckModal();
       try {
-        const res = await Decks.importMoxfield(d.moxUrl, S.settings.moxProxy);
+        const res = await Decks.importMoxfield(d.moxUrl);
         d.list = Decks.toText(res.cards, res.commanders);
         if (res.commanders.length) d.commanders = res.commanders.slice(0, 2);
         if (!d.name) d.name = res.name;
@@ -1613,7 +1762,10 @@
         return;
       } catch (e) {
         d.importOk = false;
-        d.importMsg = t("mox_" + (["badUrl", "notFound", "empty", "proxyFailed"].includes(e.message) ? e.message : "blocked"));
+        if (e.message === "blocked") {
+          d.moxStep = true;
+          d.importMsg = "";
+        } else d.importMsg = t("mox_" + (["badUrl", "notFound", "empty"].includes(e.message) ? e.message : "blocked"));
       }
       d.importing = false;
       if (ui.deck === d) deckModal();
@@ -1774,6 +1926,8 @@
   ui.view = game ? "game" : "home";
   render();
   updateWake();
+  takeFragment();
+  window.addEventListener("hashchange", takeFragment);
 
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});

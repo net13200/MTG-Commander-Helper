@@ -6,6 +6,7 @@
 
   const DATA_KEY = "ct.data.v1";
   const GAME_KEY = "ct.game.v1";
+  const CARDS_KEY = "ct.cards.v1"; // Scryfall card data, so deck checks work offline
 
   function defaults() {
     const he = (navigator.language || "").toLowerCase().startsWith("he");
@@ -13,7 +14,7 @@
       players: [], // { id, name, color, avatar, guest }
       decks: [], // { id, ownerId, name, commanders: [], colors: "", list, bracket, art }
       matches: [],
-      settings: { lang: he ? "he" : "en", keepAwake: true, dimInactive: false, turnTimer: false, showArt: true, startingLife: 40, moxProxy: "" },
+      settings: { lang: he ? "he" : "en", keepAwake: true, dimInactive: false, turnTimer: false, showArt: true, startingLife: 40 },
     };
   }
 
@@ -56,6 +57,18 @@
   const Store = {
     data,
     uid,
+    cardCache: read(CARDS_KEY) || {},
+    saveCards() {
+      if (!write(CARDS_KEY, Store.cardCache)) {
+        // Storage full: keep the decks, drop the cache (it can be refetched).
+        Store.cardCache = {};
+        write(CARDS_KEY, null);
+      }
+    },
+    clearCards() {
+      Store.cardCache = {};
+      write(CARDS_KEY, null);
+    },
     save() {
       return write(DATA_KEY, data);
     },
