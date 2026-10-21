@@ -13,7 +13,7 @@
       players: [], // { id, name, color, avatar, guest }
       decks: [], // { id, ownerId, name, commanders: [], colors: "", list, bracket, art }
       matches: [],
-      settings: { lang: he ? "he" : "en", keepAwake: true, dimInactive: false, turnTimer: false, startingLife: 40 },
+      settings: { lang: he ? "he" : "en", keepAwake: true, dimInactive: false, turnTimer: false, showArt: true, startingLife: 40, moxProxy: "" },
     };
   }
 

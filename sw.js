@@ -1,6 +1,8 @@
-// Offline shell: the app's own files are served cache-first. Scryfall calls
-// go straight to the network; the tracker never needs them.
-const CACHE = "ct-v1";
+// Offline shell: the app's own files are served cache-first. Commander art
+// from Scryfall is cached on first view so tiles keep it offline; Scryfall
+// API calls go straight to the network, the tracker never needs them.
+const CACHE = "ct-v2";
+const ART = "ct-art-v1";
 const SHELL = [
   "./",
   "index.html",
@@ -11,6 +13,8 @@ const SHELL = [
   "js/store.js",
   "js/game.js",
   "js/stats.js",
+  "js/decks.js",
+  "js/recap.js",
   "js/app.js",
 ];
 
@@ -22,14 +26,24 @@ self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== ART).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (e) => {
   const req = e.request;
-  if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (url.hostname === "cards.scryfall.io") {
+    e.respondWith(
+      caches.open(ART).then((c) =>
+        c.match(req).then((hit) => hit || fetch(req).then((res) => (c.put(req, res.clone()), res)))
+      )
+    );
+    return;
+  }
+  if (url.origin !== location.origin) return;
   e.respondWith(
     caches.match(req, { ignoreSearch: true }).then(
       (hit) =>

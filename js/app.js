@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { Store, Game, Stats, I18n } = window.CT;
+  const { Store, Game, Stats, I18n, Decks, Recap } = window.CT;
   const S = Store.data;
   const t = I18n.t;
   const $ = (sel) => document.querySelector(sel);
@@ -17,7 +17,7 @@
   const BATCH_MS = 1500;
   const ATTRIB_MS = 8000;
 
-  const ui = { view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null };
+  const ui = { view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
   let game = Store.loadGame();
   const pending = new Map(); // batch key -> { ev, timer }
   let confirmCb = null;
@@ -248,6 +248,8 @@
         <button class="menu-card" data-action="nav" data-to="players"><b>👥</b><span>${t("playersDecks")}</span></button>
         <button class="menu-card" data-action="nav" data-to="history"><b>📜</b><span>${t("history")}</span></button>
         <button class="menu-card" data-action="nav" data-to="stats"><b>📊</b><span>${t("stats")}</span></button>
+        <button class="menu-card" data-action="nav" data-to="rivalries"><b>⚔️</b><span>${t("rivalries")}</span></button>
+        <button class="menu-card" data-action="nav" data-to="seasons"><b>🏆</b><span>${t("seasons")}</span></button>
         <button class="menu-card" data-action="newManual"><b>✍️</b><span>${t("logPastGame")}</span></button>
         <button class="menu-card" data-action="nav" data-to="settings"><b>⚙️</b><span>${t("settings")}</span></button>
       </div>
@@ -309,7 +311,7 @@
       <section><h2>${t("seating")}</h2><p class="muted small">${t("seatHint")}</p>${seatMap(su.seats)}</section>
       ${n ? `<section><h2>${t("decks")}</h2>
         <label class="row"><input type="checkbox" data-change="quick" ${su.quick ? "checked" : ""}><span>${t("quickGame")}</span></label>
-        ${decks}</section>` : ""}
+        ${decks}${balanceWarnings(su).map((w) => `<p class="warn">⚖️ ${w}</p>`).join("")}</section>` : ""}
       <section class="two">
         <label class="field"><span>${t("startingLife")}</span><input type="number" inputmode="numeric" min="1" max="999" value="${su.startingLife}" data-change="startLife"></label>
         <label class="field"><span>${t("firstPlayer")}</span><select data-change="first"><option value="random">🎲 ${t("random")}</option>${firstOpts}</select></label>
@@ -354,7 +356,7 @@
       ? `<div class="out-cover"><b>${t("out")}</b><span>${t("cause_" + p.out.cause)}${Number.isInteger(p.out.by) && p.out.by !== i ? " · " + esc(game.setup.seats[p.out.by].name) : ""}</span></div>`
       : "";
     return `<div class="tile ${i === st.active ? "active" : ""} ${p.out ? "out" : ""} ${p.lethal ? "lethal" : ""}" style="grid-row:${pos[0]};grid-column:${pos[1]}">
-      <div class="tile-inner r${rot}" style="--c:${esc(seat.color)}">
+      <div class="tile-inner r${rot} ${S.settings.showArt && seat.art ? "has-art" : ""}" style="--c:${esc(seat.color)}${S.settings.showArt && seat.art ? `;--art:url('${esc(seat.art)}')` : ""}">
         <div class="life-wrap">
           <button class="zone minus" data-life="-1" data-seat="${i}" aria-label="−1"><span>−</span></button>
           <button class="zone plus" data-life="1" data-seat="${i}" aria-label="+1"><span>+</span></button>
@@ -474,7 +476,7 @@
         ${decks
           .map(
             (d) =>
-              `<button class="list-item" data-action="openDeck" data-id="${d.id}">${d.art ? `<img class="art" src="${esc(d.art)}" alt="" loading="lazy">` : ""}<span class="grow"><b>${esc(d.name)}</b><small class="muted">${esc(d.commanders.filter(Boolean).join(" + "))}</small></span>${pips(d.colors)}${d.bracket ? `<span class="tag">B${d.bracket}</span>` : ""}</button>`
+              `<button class="list-item" data-action="openDeck" data-id="${d.id}">${d.art ? `<img class="art" src="${esc(d.art)}" alt="" loading="lazy">` : ""}<span class="grow"><b>${esc(d.name)}</b><small class="muted">${esc(d.commanders.filter(Boolean).join(" + "))}</small></span>${pips(d.colors)}${deckBadge(d)}${d.analysis && (d.analysis.banned.length || d.analysis.offColor.length) ? `<span class="tag bad">⚠</span>` : ""}</button>`
           )
           .join("") || `<p class="muted">${t("noDecksYet")}</p>`}
         <button class="btn primary" data-action="openDeck" data-owner="${p.id}">+ ${t("addDeck")}</button>
@@ -483,33 +485,122 @@
     </div>`;
   }
 
+  function checkHtml(d) {
+    const a = d.analysis;
+    if (d.checking) return `<p class="muted">🔍 ${t("checking")}</p>`;
+    if (!a) return "";
+    const stale = a.fp && d.list && Decks.fingerprint(Decks.parseList(d.list).cards) !== a.fp;
+    const names = (list) => `<small class="muted">${esc(list.join(", "))}</small>`;
+    const item = (cls, text, list) => `<li class="${cls}">${text}${list && list.length ? " " + names(list) : ""}</li>`;
+    const rows = [
+      item(a.total === 100 ? "ok" : "bad", t("ck_count", { n: a.total })),
+      a.banned.length ? item("bad", t("ck_banned", { n: a.banned.length }), a.banned) : item("ok", t("ck_noBanned")),
+      a.offColor.length ? item("bad", t("ck_offColor", { n: a.offColor.length }), a.offColor) : "",
+      item(a.gameChangers.length ? "info" : "ok", t("ck_gc", { n: a.gameChangers.length }), a.gameChangers),
+      a.mld.length ? item("info", t("ck_mld"), a.mld) : "",
+      a.extraTurns.length ? item("info", t("ck_extraTurns", { n: a.extraTurns.length }), a.extraTurns) : "",
+      a.combos.length ? item("info", t("ck_combos", { n: a.combos.length }), a.combos.map((c) => c.join(" + "))) : "",
+      a.tutors.length ? item("info", t("ck_tutors", { n: a.tutors.length })) : "",
+      a.notFound.length ? item("bad", t("ck_notFound", { n: a.notFound.length }), a.notFound) : "",
+    ].join("");
+    return `<div class="check">
+      <div class="check-head"><b>${t("estBracket", { n: a.estimate.bracket })}</b><button class="btn small" data-action="useEstimate">${t("useEstimate")}</button></div>
+      <p class="muted small">${a.estimate.reasons.map((r) => t(r.key, { n: r.n })).join(" ")} ${t("estimateNote")}</p>
+      ${stale ? `<p class="warn">${t("ck_stale")}</p>` : ""}
+      <ul>${rows}</ul>
+    </div>`;
+  }
+
   function deckModal() {
     const d = ui.deck;
     const owner = Store.player(d.ownerId);
+    const scroll = modalRoot.querySelector(".modal") ? modalRoot.querySelector(".modal").scrollTop : 0;
     openModal(
       `<h2>${d.id ? t("editDeck") : t("addDeck")} <small class="muted">${esc(owner ? owner.name : "")}</small></h2>
+      <form class="field" data-submit="moxImport"><span>${t("importMoxfield")}</span>
+        <div class="inline"><input id="dMox" inputmode="url" placeholder="https://moxfield.com/decks/…" value="${esc(d.moxUrl || (d.source && d.source.url) || "")}" autocomplete="off"><button class="btn" ${d.importing ? "disabled" : ""}>${d.importing ? "…" : t("import")}</button></div></form>
+      ${d.importMsg ? `<p class="${d.importOk ? "okmsg" : "warn"}">${d.importMsg}</p>` : ""}
       <label class="field"><span>${t("commander")}</span><input id="dC1" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[0] || "")}" autocomplete="off" placeholder="${t("searchScryfall")}"></label>
       <label class="field"><span>${t("partner")}</span><input id="dC2" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[1] || "")}" autocomplete="off" placeholder="${t("optional")}"></label>
       <datalist id="cmdList"></datalist>
       ${d.warn ? `<p class="warn">${d.warn}</p>` : ""}
       <label class="field"><span>${t("deckName")}</span><input id="dName" value="${esc(d.name)}" maxlength="40" placeholder="${esc(d.commanders[0] || "")}" autocomplete="off"></label>
       <div class="field"><span>${t("colorIdentity")}</span><div class="chips">${MANA.map((c) => `<button class="mana ${d.colors.includes(c) ? "on" : ""}" data-action="dColor" data-v="${c}"><i class="pip pip-${c}"></i></button>`).join("")}</div></div>
+      <label class="field"><span>${t("decklist")} <small class="muted">${t("decklistHint")}</small></span><textarea id="dList" rows="6" placeholder="1 Sol Ring&#10;1 Arcane Signet&#10;…">${esc(d.list || "")}</textarea></label>
+      <button class="btn" data-action="checkDeck" ${d.checking ? "disabled" : ""}>🔍 ${t("checkDeck")}</button>
+      ${checkHtml(d)}
       <label class="field"><span>${t("bracket")} <small class="muted">${t("bracketHint")}</small></span><select id="dBracket"><option value="">—</option>${[1, 2, 3, 4, 5]
         .map((b) => `<option value="${b}" ${d.bracket === b ? "selected" : ""}>${b}</option>`)
         .join("")}</select></label>
-      <label class="field"><span>${t("decklist")} <small class="muted">${t("optional")}</small></span><textarea id="dList" rows="4">${esc(d.list || "")}</textarea></label>
+      ${d.version ? `<p class="muted small">${t("deckVersion", { v: d.version, date: fmtDate((d.versions || []).slice(-1)[0] ? d.versions.slice(-1)[0].at : Date.now()) })}</p>` : ""}
       <div class="actions">${d.id ? `<button class="btn danger" data-action="deckDelete">${t("delete")}</button>` : ""}<span class="grow"></span>
         <button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="deckSave">${t("save")}</button></div>`
     );
+    const m = modalRoot.querySelector(".modal");
+    if (m) m.scrollTop = scroll;
   }
 
   function readDeckForm() {
     const d = ui.deck;
+    if (!$("#dName")) return;
     const v = (id) => ($(id) ? $(id).value.trim() : "");
     d.commanders = [v("#dC1"), v("#dC2")].filter(Boolean);
     d.name = v("#dName");
-    d.list = $("#dList") ? $("#dList").value : d.list;
+    d.list = $("#dList").value;
+    d.moxUrl = v("#dMox");
     d.bracket = v("#dBracket") ? Number(v("#dBracket")) : null;
+    // A pasted list with a Commander section fills empty commander fields.
+    if (!d.commanders.length && d.list) d.commanders = Decks.parseList(d.list).commanders.slice(0, 2);
+  }
+
+  async function runCheck(d) {
+    const parsed = Decks.parseList(d.list);
+    if (!parsed.cards.length && !d.commanders.length) return toast(t("needList"));
+    d.checking = true;
+    deckModal();
+    try {
+      const { found } = await Decks.fetchCards(parsed.cards.map((c) => c.n).concat(d.commanders));
+      if (!d.colors) d.colors = Decks.colorsOf(d.commanders, found);
+      const lead = d.commanders[0] && found.get(d.commanders[0].toLowerCase());
+      if (lead && lead.art) d.art = lead.art;
+      d.analysis = Decks.analyze(parsed.cards, d.commanders, d.colors, found);
+      d.analysis.fp = Decks.fingerprint(parsed.cards);
+    } catch (e) {
+      toast(t("scryfallFailed"));
+    }
+    d.checking = false;
+    if (ui.deck === d && $("#dName")) {
+      readDeckForm();
+      deckModal();
+    }
+  }
+
+  function deckBadge(d) {
+    if (d.bracket) return `<span class="tag">B${d.bracket}</span>`;
+    if (d.analysis) return `<span class="tag" title="${t("estimate")}">~B${d.analysis.estimate.bracket}</span>`;
+    return "";
+  }
+
+  function balanceWarnings(su) {
+    if (su.quick) return [];
+    const decks = su.seats.map((s) => Store.deck(s.deckId)).filter(Boolean);
+    if (decks.length < 2) return [];
+    const warns = [];
+    const ranked = decks
+      .map((d) => ({ d, b: d.bracket || (d.analysis && d.analysis.estimate.bracket) || null }))
+      .filter((x) => x.b)
+      .sort((a, b) => b.b - a.b);
+    if (ranked.length >= 2 && ranked[0].b - ranked[ranked.length - 1].b >= 2) {
+      warns.push(t("bal_bracket", { deck: ranked[0].d.name, b: ranked[0].b, low: ranked[ranked.length - 1].b }));
+    }
+    const rows = Stats.compute(S.matches).decks.filter((r) => r.games >= 3 && decks.some((d) => d.id === r.id));
+    for (const r of rows) {
+      const others = rows.filter((o) => o !== r);
+      if (!others.length) continue;
+      const avg = others.reduce((sum, o) => sum + Stats.rate(o), 0) / others.length;
+      if (Stats.rate(r) >= 0.5 && Stats.rate(r) - avg >= 0.25) warns.push(t("bal_winrate", { deck: Store.deck(r.id).name, pct: pct(Stats.rate(r)), games: r.games }));
+    }
+    return warns;
   }
 
   function historyView() {
@@ -534,7 +625,7 @@
       .map((s, i) => {
         const e = elim[i];
         const fate = m.winnerSeat === i ? `🏆 ${t("winner")}` : e ? `${t("cause_" + e.cause)}${Number.isInteger(e.by) && e.by !== i ? " · " + esc(m.seats[e.by].name) : ""}${e.round ? " · " + t("roundN", { n: e.round }) : ""}` : "";
-        return `<tr><td>${i === m.firstSeat ? "🎲 " : ""}${esc(s.name)}</td><td>${esc(s.deckName || "—")}</td><td>${m.finalLife ? m.finalLife[i] : ""}</td><td>${fate}</td></tr>`;
+        return `<tr><td>${i === m.firstSeat ? "🎲 " : ""}${esc(s.name)}</td><td>${esc(s.deckName || "—")}${s.deckVersion > 1 ? ` <small class="muted">v${s.deckVersion}</small>` : ""}</td><td>${m.finalLife ? m.finalLife[i] : ""}</td><td>${fate}</td></tr>`;
       })
       .join("");
     const dmg =
@@ -543,7 +634,6 @@
             .map((row, i) => `<tr><th>${esc(m.seats[i].name)}</th>${row.map((v, j) => `<td class="${i === j ? "self" : ""}">${v || ""}</td>`).join("")}</tr>`)
             .join("")}</table></div></section>`
         : "";
-    const notes = (m.notes || []).length ? `<section><h2>${t("notes")}</h2>${m.notes.map((x) => `<p class="note">📝 ${esc(x)}</p>`).join("")}</section>` : "";
     const log = (m.events || []).length
       ? `<details><summary>${t("actionLog")} (${m.events.length})</summary><ol class="log">${m.events.map((e) => `<li><small>${t("roundShort", { n: e.round })} · ${fmtTime(e.t)}</small> ${describe(e, m.seats)}</li>`).join("")}</ol></details>`
       : "";
@@ -556,7 +646,10 @@
         <div><b>${n}</b><small>${t("players")}</small></div>
       </section>
       <section><div class="scroll-x"><table><tr><th>${t("player")}</th><th>${t("deck")}</th><th>${t("life")}</th><th></th></tr>${seatRows}</table></div></section>
-      ${dmg}${notes}${log}
+      <section><h2>${t("recap")}</h2><div class="recap">${Recap.recap(m, I18n.fmt)
+        .map((line) => `<p>${esc(line)}</p>`)
+        .join("")}</div><button class="btn" data-action="shareRecap" data-id="${m.id}">📤 ${t("shareRecap")}</button></section>
+      ${dmg}${log}
       <button class="btn danger" data-action="deleteMatch" data-id="${m.id}">${t("deleteMatch")}</button>
     </div>`;
   }
@@ -582,9 +675,22 @@
     </div>`;
   }
 
+  function seasonLabel(key) {
+    const [y, q] = key.split("-");
+    return t("seasonLabel", { q: q.slice(1), y });
+  }
+
+  function seasonChips(selected, action, withAll) {
+    const keys = Stats.seasons(S.matches);
+    return `<div class="chips">${withAll ? `<button class="chip ${!selected ? "on" : ""}" data-action="${action}" data-v="">${t("allTime")}</button>` : ""}${keys
+      .map((k) => `<button class="chip ${selected === k ? "on" : ""}" data-action="${action}" data-v="${k}">${seasonLabel(k)}</button>`)
+      .join("")}</div>`;
+  }
+
   function statsView() {
-    const s = Stats.compute(S.matches);
-    if (!s.games) return `${header(t("stats"))}<div class="page"><p class="muted">${t("noMatchesYet")}</p></div>`;
+    const s = Stats.compute(Stats.inSeason(S.matches, ui.statsSeason));
+    const filter = S.matches.length ? seasonChips(ui.statsSeason, "statsSeason", true) : "";
+    if (!s.games) return `${header(t("stats"))}<div class="page">${filter}<p class="muted">${t("noMatchesYet")}</p></div>`;
     const pname = (r) => {
       const p = Store.player(r.id);
       return esc(p ? p.name : r.name);
@@ -604,6 +710,7 @@
     const fmt1 = (x) => (x == null ? "—" : (Math.round(x * 10) / 10).toLocaleString(locale()));
     return `${header(t("stats"))}
     <div class="page">
+      ${filter}
       <section class="facts">
         <div><b>${s.games}</b><small>${t("games")}</small></div>
         <div><b>${fmt1(s.avgRounds)}</b><small>${t("avgRounds")}</small></div>
@@ -624,6 +731,85 @@
     </div>`;
   }
 
+  function nameFor(kind, id) {
+    if (kind === "deck") {
+      const d = Store.deck(id);
+      if (d) return d.name;
+    } else {
+      const p = Store.player(id);
+      if (p) return p.name;
+    }
+    for (let k = S.matches.length - 1; k >= 0; k--) {
+      const s = S.matches[k].seats.find((x) => (kind === "deck" ? x.deckId : x.playerId) === id);
+      if (s) return kind === "deck" ? s.deckName : s.name;
+    }
+    return "?";
+  }
+
+  function rivalriesView() {
+    const { kind } = ui.riv;
+    const rows = Stats.headToHead(S.matches, kind);
+    const ids = Object.keys(rows).sort((a, b) => nameFor(kind, a).localeCompare(nameFor(kind, b)));
+    const tabs = `<div class="chips"><button class="chip ${kind === "player" ? "on" : ""}" data-action="rivKind" data-v="player">${t("players")}</button><button class="chip ${kind === "deck" ? "on" : ""}" data-action="rivKind" data-v="deck">${t("decks")}</button></div>`;
+    if (!ids.length) return `${header(t("rivalries"))}<div class="page">${tabs}<p class="muted">${t("noRivalries")}</p></div>`;
+    const id = ids.includes(ui.riv.id) ? ui.riv.id : ids[0];
+    const mine = rows[id];
+    const nemesis = Stats.topBy(mine, "koTaken");
+    const victim = Stats.topBy(mine, "koGiven");
+    const opponents = Object.entries(mine).sort((a, b) => b[1].games - a[1].games);
+
+    // The busiest head-to-heads across the whole group.
+    const pairs = [];
+    for (const a of ids) for (const [b, r] of Object.entries(rows[a])) if (a < b) pairs.push({ a, b, r });
+    pairs.sort((x, y) => y.r.games - x.r.games || Math.abs(x.r.wins - x.r.losses) - Math.abs(y.r.wins - y.r.losses));
+
+    return `${header(t("rivalries"))}
+    <div class="page">
+      ${tabs}
+      <div class="chips">${ids.map((x) => `<button class="chip ${x === id ? "on" : ""}" data-action="rivPick" data-v="${esc(x)}">${esc(nameFor(kind, x))}</button>`).join("")}</div>
+      <section class="facts">
+        <div><b>${nemesis ? esc(nameFor(kind, nemesis.id)) : "—"}</b><small>😈 ${t("nemesis")}${nemesis ? " · " + t("koCount", { n: nemesis.r.koTaken }) : ""}</small></div>
+        <div><b>${victim ? esc(nameFor(kind, victim.id)) : "—"}</b><small>🎯 ${t("favoriteTarget")}${victim ? " · " + t("koCount", { n: victim.r.koGiven }) : ""}</small></div>
+      </section>
+      <section><h2>${t("headToHead")}</h2><p class="muted small">${t("h2hHint")}</p><div class="scroll-x"><table><tr><th>${t("opponent")}</th><th>${t("games")}</th><th>${t("record")}</th><th>💀 ${t("koGivenTaken")}</th></tr>${opponents
+        .map(([o, r]) => `<tr><td>${esc(nameFor(kind, o))}</td><td>${r.games}</td><td>${r.wins}–${r.losses}</td><td>${r.koGiven} / ${r.koTaken}</td></tr>`)
+        .join("")}</table></div></section>
+      <section><h2>${t("topRivalries")}</h2>${pairs
+        .slice(0, 5)
+        .map((x) => `<div class="list-item"><span class="grow"><b>${esc(nameFor(kind, x.a))} ⚔ ${esc(nameFor(kind, x.b))}</b><small class="muted">${t("pairLine", { w: x.r.wins, l: x.r.losses, n: x.r.games })}</small></span></div>`)
+        .join("")}</section>
+    </div>`;
+  }
+
+  function seasonsView() {
+    const keys = Stats.seasons(S.matches);
+    const key = keys.includes(ui.season) ? ui.season : keys[0];
+    const current = key === Stats.seasonKey(Date.now());
+    const ms = Stats.inSeason(S.matches, key);
+    const a = Stats.awards(ms);
+    const pname = (r) => esc(nameFor("player", r.id));
+    const award = (icon, label, who, detail) => `<div class="award"><span class="award-icon">${icon}</span><small>${label}</small><b>${who || "—"}</b>${detail ? `<small class="muted">${detail}</small>` : ""}</div>`;
+    const body = ms.length
+      ? `<section class="${current ? "" : "season-done"}"><h2>${current ? t("leadersSoFar") : "🎉 " + t("seasonAwards")}</h2>
+          <div class="awards">
+            ${award("👑", t("champion"), a.champion && pname(a.champion), a.champion && t("winsOf", { w: a.champion.wins, n: a.champion.games }))}
+            ${award("⚔️", t("mostDamage"), a.mostDamage && pname(a.mostDamage), a.mostDamage && String(a.mostDamage.damage))}
+            ${award("💀", t("mostKnockouts"), a.mostKnockouts && pname(a.mostKnockouts), a.mostKnockouts && String(a.mostKnockouts.knockouts))}
+            ${award("🃏", t("bestDeck"), a.bestDeck && esc(nameFor("deck", a.bestDeck.id)), a.bestDeck && pct(Stats.rate(a.bestDeck)))}
+          </div></section>
+        <section><h2>${t("standings")}</h2><div class="scroll-x"><table><tr><th>#</th><th>${t("player")}</th><th>${t("wins")}</th><th>${t("games")}</th><th>${t("winRate")}</th><th>💀</th></tr>${a.standings
+          .map((r, i) => `<tr><td>${i + 1}</td><td>${pname(r)}</td><td><b>${r.wins}</b></td><td>${r.games}</td><td>${pct(Stats.rate(r))}</td><td>${r.knockouts}</td></tr>`)
+          .join("")}</table></div></section>
+        <button class="btn" data-action="seasonStats" data-v="${key}">📊 ${t("seasonFullStats")}</button>`
+      : `<p class="muted">${t("noMatchesSeason")}</p>`;
+    return `${header(t("seasons"))}
+    <div class="page">
+      ${seasonChips(key, "seasonPick", false)}
+      <p class="muted small">${t("seasonHint")}</p>
+      ${body}
+    </div>`;
+  }
+
   function settingsView() {
     const st = S.settings;
     const toggle = (key) => `<label class="row"><input type="checkbox" data-change="setToggle" data-key="${key}" ${st[key] ? "checked" : ""}><span class="grow">${t("set_" + key)}<small class="muted">${t("set_" + key + "_hint")}</small></span></label>`;
@@ -632,7 +818,11 @@
       <section>
         <label class="field"><span>${t("language")}</span><select data-change="lang"><option value="en" ${st.lang === "en" ? "selected" : ""}>English</option><option value="he" ${st.lang === "he" ? "selected" : ""}>עברית</option></select></label>
         <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
-        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}
+        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}
+      </section>
+      <section><h2>${t("deckImport")}</h2>
+        <label class="field"><span>${t("moxProxy")}</span><input value="${esc(st.moxProxy || "")}" placeholder="https://….workers.dev" inputmode="url" autocomplete="off" data-change="moxProxy"></label>
+        <p class="muted small">${t("moxProxyHint")}</p>
       </section>
       <section><h2>${t("backup")}</h2><p class="muted small">${t("backupHint")}</p>
         <div class="actions"><button class="btn" data-action="exportData">⬇ ${t("export")}</button>
@@ -653,6 +843,8 @@
     match: matchView,
     manual: manualView,
     stats: statsView,
+    rivalries: rivalriesView,
+    seasons: seasonsView,
     settings: settingsView,
   };
 
@@ -851,7 +1043,9 @@
           avatar: p.avatar,
           deckId: d ? d.id : null,
           deckName: d ? d.name : "",
+          deckVersion: d && d.version ? d.version : null,
           commanders: d ? d.commanders.filter(Boolean) : [],
+          art: d && d.art ? d.art : null,
         };
       });
       const firstSeat = su.first === "random" ? random(n) : Number(su.first);
@@ -1103,8 +1297,18 @@
     openDeck: (el) => {
       const d = el.dataset.id ? Store.deck(el.dataset.id) : null;
       ui.deck = d
-        ? { ...d, commanders: [...d.commanders], warn: "" }
-        : { id: null, ownerId: el.dataset.owner, name: "", commanders: [], colors: "", list: "", bracket: null, art: null, warn: "" };
+        ? { ...d, commanders: [...d.commanders], warn: "", importMsg: "" }
+        : { id: null, ownerId: el.dataset.owner, name: "", commanders: [], colors: "", list: "", bracket: null, art: null, warn: "", analysis: null, versions: [], version: 0 };
+      deckModal();
+    },
+    checkDeck: () => {
+      readDeckForm();
+      if (!navigator.onLine) return toast(t("needOnline"));
+      runCheck(ui.deck);
+    },
+    useEstimate: () => {
+      readDeckForm();
+      ui.deck.bracket = ui.deck.analysis.estimate.bracket;
       deckModal();
     },
     dColor: (el) => {
@@ -1118,7 +1322,31 @@
       readDeckForm();
       const d = ui.deck;
       if (!d.name && !d.commanders.length) return toast(t("deckNeedsName"));
-      const deck = { id: d.id || Store.uid(), ownerId: d.ownerId, name: d.name || d.commanders.join(" + "), commanders: d.commanders, colors: d.colors, list: d.list, bracket: d.bracket, art: d.art || null };
+      const prev = d.id ? Store.deck(d.id) : null;
+      const parsed = Decks.parseList(d.list);
+      const fp = parsed.cards.length ? Decks.fingerprint(parsed.cards) : "";
+      // A changed list becomes a new version; saved games keep the one played.
+      let version = (prev && prev.version) || 0;
+      const versions = ((prev && prev.versions) || []).slice();
+      if (fp && fp !== (prev && prev.fp)) {
+        version = prev && prev.fp ? version + 1 : Math.max(version, 1);
+        versions.push({ v: version, at: Date.now(), list: d.list });
+      }
+      const deck = {
+        id: d.id || Store.uid(),
+        ownerId: d.ownerId,
+        name: d.name || d.commanders.join(" + "),
+        commanders: d.commanders,
+        colors: d.colors,
+        list: d.list,
+        fp,
+        version,
+        versions: versions.slice(-20),
+        bracket: d.bracket,
+        art: d.art || null,
+        analysis: d.analysis || null,
+        source: d.source || null,
+      };
       const idx = S.decks.findIndex((x) => x.id === deck.id);
       if (idx >= 0) S.decks[idx] = deck;
       else S.decks.push(deck);
@@ -1137,6 +1365,40 @@
         t("delete")
       ),
 
+    rivKind: (el) => {
+      ui.riv = { kind: el.dataset.v, id: null };
+      render();
+    },
+    rivPick: (el) => {
+      ui.riv.id = el.dataset.v;
+      render();
+    },
+    seasonPick: (el) => {
+      ui.season = el.dataset.v;
+      render();
+    },
+    seasonStats: (el) => {
+      ui.statsSeason = el.dataset.v;
+      go("stats");
+    },
+    statsSeason: (el) => {
+      ui.statsSeason = el.dataset.v;
+      render();
+    },
+    shareRecap: async (el) => {
+      const m = S.matches.find((x) => x.id === el.dataset.id);
+      if (!m) return;
+      const text = `⚔️ ${I18n.raw("appName")} · ${fmtDate(m.date)}\n\n` + Recap.recap(m, I18n.fmt).join("\n");
+      if (navigator.share) {
+        try {
+          await navigator.share({ text });
+          return;
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+        }
+      }
+      window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank", "noopener");
+    },
     deleteMatch: (el) =>
       confirmModal(
         t("confirmDeleteMatch"),
@@ -1258,7 +1520,7 @@
       const d = ui.deck;
       const names = d.commanders.slice();
       if (!names.length || !navigator.onLine) return;
-      const cards = await Promise.all(names.map(lookupCard));
+      const cards = await Promise.all(names.map((n) => Decks.lookupCard(n).catch(() => null)));
       if (ui.deck !== d || !$("#dC1")) return;
       readDeckForm();
       const found = cards.filter(Boolean);
@@ -1266,7 +1528,7 @@
       found.forEach((c, k) => {
         if (d.commanders[k] && d.commanders[k].toLowerCase() === c.name.toLowerCase()) d.commanders[k] = c.name;
       });
-      d.colors = MANA.filter((m) => found.some((c) => c.colors.includes(m))).join("");
+      d.colors = MANA.filter((m) => found.some((c) => c.ci.includes(m))).join("");
       d.art = found[0].art || d.art;
       const banned = found.filter((c) => c.legal === "banned").map((c) => c.name);
       const notCmd = found.filter((c) => !c.canLead).map((c) => c.name);
@@ -1286,6 +1548,10 @@
       S.settings.lang = el.value;
       Store.save();
       render();
+    },
+    moxProxy: (el) => {
+      S.settings.moxProxy = el.value.trim();
+      Store.save();
     },
     defaultLife: (el) => {
       S.settings.startingLife = clampLife(el.value);
@@ -1325,6 +1591,33 @@
   };
 
   const F = {
+    moxImport: async () => {
+      readDeckForm();
+      const d = ui.deck;
+      if (!d.moxUrl) return;
+      if (!navigator.onLine) return toast(t("needOnline"));
+      d.importing = true;
+      d.importMsg = "";
+      deckModal();
+      try {
+        const res = await Decks.importMoxfield(d.moxUrl, S.settings.moxProxy);
+        d.list = Decks.toText(res.cards, res.commanders);
+        if (res.commanders.length) d.commanders = res.commanders.slice(0, 2);
+        if (!d.name) d.name = res.name;
+        d.source = res.source;
+        d.colors = "";
+        d.importOk = true;
+        d.importMsg = t("importedN", { n: res.cards.reduce((sum, c) => sum + c.q, 0) });
+        d.importing = false;
+        await runCheck(d);
+        return;
+      } catch (e) {
+        d.importOk = false;
+        d.importMsg = t("mox_" + (["badUrl", "notFound", "empty", "proxyFailed"].includes(e.message) ? e.message : "blocked"));
+      }
+      d.importing = false;
+      if (ui.deck === d) deckModal();
+    },
     addGuest: (form) => {
       const input = form.querySelector("input");
       const name = input.value.trim();
@@ -1366,31 +1659,11 @@
   async function autocomplete(q) {
     const seq = ++acSeq;
     try {
-      const r = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(q)}`);
-      const j = await r.json();
+      const names = await Decks.autocomplete(q);
       const dl = $("#cmdList");
-      if (seq === acSeq && dl) dl.innerHTML = (j.data || []).map((name) => `<option value="${esc(name)}">`).join("");
+      if (seq === acSeq && dl) dl.innerHTML = names.map((name) => `<option value="${esc(name)}">`).join("");
     } catch (e) {
       /* offline: typing a name by hand still works */
-    }
-  }
-  async function lookupCard(name) {
-    try {
-      const r = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`);
-      if (!r.ok) return null;
-      const c = await r.json();
-      const imgs = c.image_uris || (c.card_faces && c.card_faces[0] && c.card_faces[0].image_uris) || {};
-      const typeLine = c.type_line || (c.card_faces && c.card_faces[0].type_line) || "";
-      const text = c.oracle_text || (c.card_faces || []).map((f) => f.oracle_text).join("\n");
-      return {
-        name: c.name,
-        colors: c.color_identity || [],
-        art: imgs.art_crop || null,
-        legal: c.legalities && c.legalities.commander,
-        canLead: /Legendary.*Creature|Background/.test(typeLine) || /can be your commander/i.test(text || ""),
-      };
-    } catch (e) {
-      return null;
     }
   }
 

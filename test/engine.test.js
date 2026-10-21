@@ -87,8 +87,8 @@ test("every UI string key exists in English and Hebrew", () => {
   const { en, he } = global.CT.I18n.DICTS;
   assert.deepEqual(Object.keys(he).filter((k) => !(k in en)), []);
   assert.deepEqual(Object.keys(en).filter((k) => !(k in he)), []);
-  const src = fs.readFileSync(path.join(__dirname, "../js/app.js"), "utf8");
-  const used = [...src.matchAll(/\b(?:t|I18n\.raw)\("([A-Za-z_]+)"/g)].map((m) => m[1]);
+  const src = ["app.js", "recap.js", "decks.js"].map((f) => fs.readFileSync(path.join(__dirname, "../js", f), "utf8")).join("\n");
+  const used = [...src.matchAll(/\b(?:t|I18n\.raw|say)\("([A-Za-z_]+)"/g), ...src.matchAll(/key: "([A-Za-z_]+)"/g)].map((m) => m[1]);
   // Keys ending in "_" are prefixes completed at runtime (cause_combat, ...).
   assert.deepEqual([...new Set(used)].filter((k) => !k.endsWith("_") && !(k in en)), []);
 });

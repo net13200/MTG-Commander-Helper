@@ -82,6 +82,70 @@
     };
   }
 
-  CT.Stats = { compute, rate };
+  // ---------- Rivalries ----------
+
+  // rows[a][b] describes a against b over every match both took part in.
+  // kind "player" keys by profile, "deck" by deck (games without a deck skip).
+  function headToHead(matches, kind) {
+    const keyOf = (s) => (kind === "deck" ? s.deckId || null : s.playerId);
+    const rows = {};
+    const cell = (a, b) => {
+      rows[a] = rows[a] || {};
+      return (rows[a][b] = rows[a][b] || { games: 0, wins: 0, losses: 0, koGiven: 0, koTaken: 0 });
+    };
+    for (const m of matches) {
+      const ids = m.seats.map(keyOf);
+      ids.forEach((a, i) => {
+        ids.forEach((b, j) => {
+          if (i === j || !a || !b || a === b) return;
+          const c = cell(a, b);
+          c.games++;
+          if (m.winnerSeat === i) c.wins++;
+          if (m.winnerSeat === j) c.losses++;
+        });
+      });
+      for (const e of m.eliminations || []) {
+        const a = ids[e.by];
+        const b = ids[e.seat];
+        if (!Number.isInteger(e.by) || e.by === e.seat || !a || !b || a === b) continue;
+        cell(a, b).koGiven++;
+        cell(b, a).koTaken++;
+      }
+    }
+    return rows;
+  }
+
+  function topBy(row, key) {
+    let best = null;
+    for (const [id, r] of Object.entries(row || {})) if (r[key] > 0 && (!best || r[key] > best.r[key])) best = { id, r };
+    return best;
+  }
+
+  // ---------- Seasons (calendar quarters) ----------
+
+  function seasonKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-Q" + (Math.floor(d.getMonth() / 3) + 1);
+  }
+
+  function seasons(matches, now) {
+    const keys = new Set(matches.map((m) => seasonKey(m.date)));
+    keys.add(seasonKey(now || Date.now()));
+    return [...keys].sort().reverse();
+  }
+
+  function inSeason(matches, key) {
+    return key ? matches.filter((m) => seasonKey(m.date) === key) : matches;
+  }
+
+  // Standings rank by wins, then win rate; awards need at least two games.
+  function awards(matches) {
+    const s = compute(matches);
+    const standings = [...s.players].sort((a, b) => b.wins - a.wins || rate(b) - rate(a) || b.games - a.games);
+    const bestDeck = s.decks.filter((d) => d.games >= 2).sort((a, b) => rate(b) - rate(a) || b.wins - a.wins)[0] || null;
+    return { stats: s, standings, champion: standings[0] && standings[0].wins ? standings[0] : null, mostDamage: s.mostDamage, mostKnockouts: s.mostKnockouts, bestDeck };
+  }
+
+  CT.Stats = { compute, rate, headToHead, topBy, seasonKey, seasons, inSeason, awards };
   if (typeof module !== "undefined") module.exports = CT.Stats;
 })(typeof window !== "undefined" ? window : globalThis);
