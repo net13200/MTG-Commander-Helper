@@ -424,3 +424,14 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 .linkish { background: none; border: none; padding: 0; color: var(--accent); font-weight: 600; text-decoration: underline; }
 .howto { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; line-height: 1.4; }
 #bmCode { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+
+/* ---------- Unrecognized cards ---------- */
+
+.unknown { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.unknown ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.unk { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px; border-radius: 10px; background: var(--surface); font-size: 0.9rem; }
+.unk-name { color: var(--danger); font-weight: 600; flex-basis: 100%; }
+.unk-sug { flex: 1; min-width: 0; }
+.unk-actions { display: flex; gap: 6px; margin-inline-start: auto; }
+.kept { font-size: 0.85rem; color: var(--muted); }
+.check-head .btn { white-space: nowrap; flex: none; }

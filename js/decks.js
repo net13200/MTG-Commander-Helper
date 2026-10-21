@@ -23,6 +23,19 @@
       .trim();
   }
 
+  // Fixes the spellings exports and keyboards commonly get wrong, so they
+  // match Scryfall: curly quotes, "Fire/Ice" split cards, Arena "A-" names.
+  function normalizeName(name) {
+    return String(name || "")
+      .replace(/[\u2018\u2019\u02BC\u0060\u00B4]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2013\u2014]/g, "-")
+      .replace(/^A-(?=[A-Z])/, "")
+      .replace(/\s*\/{1,2}\s*/g, " // ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   // Accepts the text export of Moxfield, Archidekt, MTGO/Arena and plain lists.
   function parseList(text) {
     const byName = new Map();
@@ -42,7 +55,7 @@
       const qty = m ? Number(m[1]) : 1;
       const rawName = m ? m[2] : line;
       const tagged = /\*CMDR\*/i.test(rawName) || /\[[^\]]*commander[^\]]*\]/i.test(rawName);
-      const name = cleanName(rawName);
+      const name = normalizeName(cleanName(rawName));
       if (!name) continue;
       if ((section === "commander" || tagged) && !commanders.includes(name)) commanders.push(name);
       const key = name.toLowerCase();
@@ -51,6 +64,19 @@
       else byName.set(key, { q: qty, n: name });
     }
     return { cards: [...byName.values()], commanders };
+  }
+
+  // Swaps one card name for another in a decklist, keeping each line's count.
+  function replaceName(text, from, to) {
+    const target = normalizeName(from).toLowerCase();
+    return String(text || "")
+      .split(/\r?\n/)
+      .map((line) => {
+        const m = line.trim().match(/^(\d+\s*x?\s+)?(.+)$/i);
+        if (!m) return line;
+        return normalizeName(cleanName(m[2])).toLowerCase() === target ? (m[1] || "") + to : line;
+      })
+      .join("\n");
   }
 
   function toText(cards, commanders) {
@@ -191,6 +217,26 @@
     return { found, notFound, fetched: missing.length };
   }
 
+  // Closest Scryfall match for names it didn't recognize ("Did you mean…?").
+  // Returns { name: suggestion summary }; matches are cached like any card.
+  async function suggest(names, cache) {
+    const out = {};
+    for (const [i, name] of names.slice(0, 25).entries()) {
+      if (i) await wait(110);
+      try {
+        const r = await fetch(`${SCRYFALL}/cards/named?fuzzy=${encodeURIComponent(name)}`);
+        if (!r.ok) continue;
+        const c = await r.json();
+        const s = summarize(c);
+        out[name] = s;
+        if (cache) for (const key of [c.name, ...(c.card_faces || []).map((f) => f.name)]) cache[key.toLowerCase()] = s;
+      } catch (e) {
+        break; // offline: no suggestions this time
+      }
+    }
+    return out;
+  }
+
   async function autocomplete(q) {
     const r = await fetch(`${SCRYFALL}/cards/autocomplete?q=${encodeURIComponent(q)}`);
     const j = await r.json();
@@ -271,16 +317,18 @@
   }
 
   // cards: [{q, n}]; lookup: Map(lowercase name -> summary); colors: "WUBRG" subset or "".
-  function analyze(cards, commanders, colors, lookup) {
+  // known: names the owner chose to keep as they are (custom or proxy cards).
+  function analyze(cards, commanders, colors, lookup, known) {
     const has = lower(cards.map((c) => c.n).concat(commanders || []));
     const deckCi = colors ? colors.split("") : null;
-    const out = { total: 0, notFound: [], banned: [], offColor: [], gameChangers: [], mld: [], extraTurns: [], tutors: [], combos: [] };
+    const keep = lower(known || []);
+    const out = { total: 0, notFound: [], custom: [], banned: [], offColor: [], gameChangers: [], mld: [], extraTurns: [], tutors: [], combos: [] };
     const mldNames = lower(MLD);
     for (const { q, n } of cards) {
       out.total += q;
       const c = lookup.get(n.toLowerCase());
       if (!c) {
-        out.notFound.push(n);
+        (keep.has(n.toLowerCase()) ? out.custom : out.notFound).push(n);
         continue;
       }
       if (c.legal === "banned" || c.legal === "not_legal") out.banned.push(c.name);
@@ -312,6 +360,8 @@
       if (gc) reasons.push({ key: "br_gcFew", n: gc });
     } else reasons.push({ key: "br_none" });
     if (a.combos.length) reasons.push({ key: "br_combos", n: a.combos.length });
+    const unchecked = (a.notFound || []).length + (a.custom || []).length;
+    if (unchecked) reasons.push({ key: "br_unchecked", n: unchecked });
     return { bracket: b, reasons };
   }
 
@@ -324,6 +374,6 @@
     return ["W", "U", "B", "R", "G"].filter((x) => all.has(x)).join("");
   }
 
-  CT.Decks = { parseList, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
+  CT.Decks = { parseList, normalizeName, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
   if (typeof module !== "undefined") module.exports = CT.Decks;
 })(typeof window !== "undefined" ? window : globalThis);

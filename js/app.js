@@ -501,14 +501,36 @@
       a.extraTurns.length ? item("info", t("ck_extraTurns", { n: a.extraTurns.length }), a.extraTurns) : "",
       a.combos.length ? item("info", t("ck_combos", { n: a.combos.length }), a.combos.map((c) => c.join(" + "))) : "",
       a.tutors.length ? item("info", t("ck_tutors", { n: a.tutors.length })) : "",
-      a.notFound.length ? item("bad", t("ck_notFound", { n: a.notFound.length }), a.notFound) : "",
     ].join("");
     return `<div class="check">
       <div class="check-head"><b>${t("estBracket", { n: a.estimate.bracket })}</b><button class="btn small" data-action="useEstimate">${t("useEstimate")}</button></div>
       <p class="muted small">${a.estimate.reasons.map((r) => t(r.key, { n: r.n })).join(" ")} ${t("estimateNote")}</p>
       ${stale ? `<p class="warn">${t("ck_stale")}</p>` : ""}
       <ul>${rows}</ul>
+      ${unknownHtml(a)}
     </div>`;
+  }
+
+  // Cards Scryfall didn't recognize: fix to the suggested name, edit by hand,
+  // or keep as is (custom or proxy cards), which stops flagging them.
+  function unknownHtml(a) {
+    const sug = a.suggest || {};
+    const fixable = a.notFound.filter((n) => sug[n]);
+    const rows = a.notFound
+      .map((n) => {
+        const s = sug[n];
+        return `<li class="unk">
+          <span class="unk-name">✕ ${esc(n)}</span>
+          ${s ? `<span class="unk-sug">${t("didYouMean")} <b>${esc(s.name)}</b>?</span>` : `<span class="unk-sug muted">${t("noSuggestion")}</span>`}
+          <span class="unk-actions">${s ? `<button class="btn small primary" data-action="fixCard" data-from="${esc(n)}" data-to="${esc(s.name)}">${t("fixBtn")}</button>` : `<button class="btn small" data-action="editCard" data-name="${esc(n)}">${t("editBtn")}</button>`}<button class="btn small" data-action="keepCard" data-name="${esc(n)}">${t("keepBtn")}</button></span>
+        </li>`;
+      })
+      .join("");
+    const custom = (a.custom || [])
+      .map((n) => `<li class="kept">${esc(n)} <button class="linkish" data-action="unkeepCard" data-name="${esc(n)}">${t("undo")}</button></li>`)
+      .join("");
+    return `${a.notFound.length ? `<div class="unknown"><div class="check-head"><b>${t("ck_notFound", { n: a.notFound.length })}</b>${fixable.length > 1 ? `<button class="btn small primary" data-action="fixAll">${t("fixAll", { n: fixable.length })}</button>` : ""}</div><ul>${rows}</ul></div>` : ""}
+      ${custom ? `<div class="unknown"><p class="muted small">${t("ck_custom", { n: a.custom.length })}</p><ul>${custom}</ul></div>` : ""}`;
   }
 
   function deckModal() {
@@ -609,13 +631,17 @@
     d.checking = true;
     deckModal();
     try {
-      const { found, fetched } = await Decks.fetchCards(parsed.cards.map((c) => c.n).concat(d.commanders), Store.cardCache);
-      if (fetched) Store.saveCards();
+      d.commanders = d.commanders.map(Decks.normalizeName);
+      const known = new Set((d.known || []).map((n) => n.toLowerCase()));
+      const names = parsed.cards.map((c) => c.n).concat(d.commanders).filter((n) => !known.has(n.toLowerCase()));
+      const { found, fetched } = await Decks.fetchCards(names, Store.cardCache);
       if (!d.colors) d.colors = Decks.colorsOf(d.commanders, found);
       const lead = d.commanders[0] && found.get(d.commanders[0].toLowerCase());
       if (lead && lead.art) d.art = lead.art;
-      d.analysis = Decks.analyze(parsed.cards, d.commanders, d.colors, found);
+      d.analysis = Decks.analyze(parsed.cards, d.commanders, d.colors, found, d.known);
       d.analysis.fp = Decks.fingerprint(parsed.cards);
+      if (d.analysis.notFound.length) d.analysis.suggest = await Decks.suggest(d.analysis.notFound, Store.cardCache);
+      if (fetched || d.analysis.notFound.length) Store.saveCards();
     } catch (e) {
       toast(navigator.onLine ? t("scryfallFailed") : t("needOnline"));
     }
@@ -624,6 +650,16 @@
       readDeckForm();
       deckModal();
     }
+  }
+
+  function fixNames(d, map) {
+    for (const [from, to] of Object.entries(map)) {
+      d.list = Decks.replaceName(d.list, from, to);
+      d.commanders = d.commanders.map((c) => (Decks.normalizeName(c).toLowerCase() === Decks.normalizeName(from).toLowerCase() ? to : c));
+    }
+    const n = Object.keys(map).length;
+    if (n) toast(t("fixedN", { n }));
+    runCheck(d);
   }
 
   function deckBadge(d) {
@@ -1354,13 +1390,53 @@
     openDeck: (el) => {
       const d = el.dataset.id ? Store.deck(el.dataset.id) : null;
       ui.deck = d
-        ? { ...d, commanders: [...d.commanders], warn: "", importMsg: "" }
+        ? { ...d, commanders: [...d.commanders], known: [...(d.known || [])], warn: "", importMsg: "" }
         : { id: null, ownerId: el.dataset.owner, name: "", commanders: [], colors: "", list: "", bracket: null, art: null, warn: "", analysis: null, versions: [], version: 0 };
       deckModal();
     },
     checkDeck: () => {
       readDeckForm();
       runCheck(ui.deck);
+    },
+    fixCard: (el) => {
+      readDeckForm();
+      fixNames(ui.deck, { [el.dataset.from]: el.dataset.to });
+    },
+    fixAll: () => {
+      readDeckForm();
+      const d = ui.deck;
+      const map = {};
+      for (const n of d.analysis.notFound) if (d.analysis.suggest && d.analysis.suggest[n]) map[n] = d.analysis.suggest[n].name;
+      fixNames(d, map);
+    },
+    keepCard: (el) => {
+      readDeckForm();
+      const d = ui.deck;
+      d.known = [...new Set([...(d.known || []), el.dataset.name])];
+      runCheck(d);
+    },
+    unkeepCard: (el) => {
+      readDeckForm();
+      const d = ui.deck;
+      d.known = (d.known || []).filter((n) => n.toLowerCase() !== el.dataset.name.toLowerCase());
+      runCheck(d);
+    },
+    editCard: (el) => {
+      const ta = $("#dList");
+      if (!ta) return;
+      const name = el.dataset.name.toLowerCase();
+      const lines = ta.value.split("\n");
+      let pos = 0;
+      for (const line of lines) {
+        if (line.toLowerCase().includes(name)) {
+          ta.focus();
+          ta.setSelectionRange(pos, pos + line.length);
+          ta.scrollIntoView({ block: "center" });
+          return;
+        }
+        pos += line.length + 1;
+      }
+      ta.focus();
     },
     pasteClipboard: async () => {
       readDeckForm();
@@ -1500,6 +1576,7 @@
         art: d.art || null,
         analysis: d.analysis || null,
         source: d.source || null,
+        known: d.known || [],
       };
       const idx = S.decks.findIndex((x) => x.id === deck.id);
       if (idx >= 0) S.decks[idx] = deck;

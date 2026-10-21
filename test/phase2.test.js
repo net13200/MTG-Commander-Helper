@@ -160,3 +160,41 @@ test("card lookups come from the local cache before Scryfall", async () => {
   assert.equal(second.found.size, 2);
   delete global.fetch;
 });
+
+test("names are normalized the way Scryfall spells them", () => {
+  assert.equal(Decks.normalizeName("Thassa’s Oracle"), "Thassa's Oracle");
+  assert.equal(Decks.normalizeName("Fire/Ice"), "Fire // Ice");
+  assert.equal(Decks.normalizeName("Fire / Ice"), "Fire // Ice");
+  assert.equal(Decks.normalizeName("A-Teferi, Time Raveler"), "Teferi, Time Raveler");
+  assert.equal(Decks.normalizeName("Ach! Hans, Run!"), "Ach! Hans, Run!");
+  assert.deepEqual(Decks.parseList("1 Fire/Ice\n1 Thassa’s Oracle").cards.map((c) => c.n), ["Fire // Ice", "Thassa's Oracle"]);
+});
+
+test("replaceName fixes a line and keeps its count and the rest of the list", () => {
+  const list = "Commander\n1 Atraxa Praetors Voice\n\nDeck\n2x Sol Rign (CMM) 1\n1 Forest";
+  const out = Decks.replaceName(Decks.replaceName(list, "Sol Rign", "Sol Ring"), "Atraxa Praetors Voice", "Atraxa, Praetors' Voice");
+  assert.equal(out, "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n2x Sol Ring\n1 Forest");
+});
+
+test("kept-as-is cards are not errors but lower confidence in the bracket", () => {
+  const lookup = new Map([["sol ring", { name: "Sol Ring", type: "", text: "", ci: [], legal: "legal", gc: false }]]);
+  const cards = [{ q: 1, n: "Sol Ring" }, { q: 1, n: "My Custom Card" }, { q: 1, n: "Sol Rign" }];
+  const a = Decks.analyze(cards, [], "", lookup, ["my custom card"]);
+  assert.deepEqual(a.notFound, ["Sol Rign"]);
+  assert.deepEqual(a.custom, ["My Custom Card"]);
+  assert.ok(a.estimate.reasons.some((r) => r.key === "br_unchecked" && r.n === 2));
+});
+
+test("suggestions come from Scryfall's fuzzy search and are cached", async () => {
+  global.fetch = async (url) => {
+    const q = new URL(url).searchParams.get("fuzzy");
+    if (q === "Sol Rign") return { ok: true, json: async () => ({ name: "Sol Ring", color_identity: [], legalities: { commander: "legal" } }) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const cache = {};
+  const sug = await Decks.suggest(["Sol Rign", "Totally Made Up"], cache);
+  assert.equal(sug["Sol Rign"].name, "Sol Ring");
+  assert.equal(sug["Totally Made Up"], undefined);
+  assert.ok(cache["sol ring"]);
+  delete global.fetch;
+});
