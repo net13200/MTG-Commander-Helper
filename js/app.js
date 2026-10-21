@@ -1,0 +1,1508 @@
+(function () {
+  "use strict";
+  const { Store, Game, Stats, I18n } = window.CT;
+  const S = Store.data;
+  const t = I18n.t;
+  const $ = (sel) => document.querySelector(sel);
+  const app = $("#app");
+  const modalRoot = $("#modal");
+
+  const COLORS = ["#e5484d", "#f76b15", "#ffc53d", "#46a758", "#12a594", "#0090ff", "#6e56cf", "#d6409f", "#8d8d8d", "#ad7f58"];
+  const AVATARS = ["🐉", "🧙", "🦉", "🐺", "🦁", "🐙", "🌲", "🔥", "💀", "⚡", "🌊", "🌞", "🦇", "🐍", "🛡️", "👑", "🍄", "🤖"];
+  const MANA = ["W", "U", "B", "R", "G"];
+  const CAUSES = ["combat", "commander", "poison", "altwin", "concede", "other"];
+  const WIN_TYPES = ["last", "alt", "concede", "draw"];
+  const QUICK_COUNTERS = ["energy", "experience", "rad"];
+  const NOTE_TAGS = ["combo", "swing", "comeback", "kingmaker", "misplay", "funny"];
+  const BATCH_MS = 1500;
+  const ATTRIB_MS = 8000;
+
+  const ui = { view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null };
+  let game = Store.loadGame();
+  const pending = new Map(); // batch key -> { ev, timer }
+  let confirmCb = null;
+  let attribTimer = null;
+  let wakeLock = null;
+
+  // ---------- Helpers ----------
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  }
+  function fmtDelta(d) {
+    return d > 0 ? "+" + d : "−" + Math.abs(d);
+  }
+  function fmtClock(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = String(s % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+  }
+  function locale() {
+    return S.settings.lang === "he" ? "he-IL" : "en-GB";
+  }
+  function fmtDate(ts) {
+    return new Date(ts).toLocaleDateString(locale(), { day: "numeric", month: "short", year: "numeric" });
+  }
+  function fmtTime(ts) {
+    return new Date(ts).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+  }
+  function pct(x) {
+    return Math.round(x * 100) + "%";
+  }
+  function avatar(p) {
+    return `<span class="avatar" style="--c:${esc(p.color)}">${esc(p.avatar || (p.name || "?").slice(0, 1))}</span>`;
+  }
+  function pips(colors) {
+    const list = (colors || "").split("").filter((c) => MANA.includes(c));
+    return list.length ? `<span class="pips">${list.map((c) => `<i class="pip pip-${c}"></i>`).join("")}</span>` : "";
+  }
+  function cmdNames(seat) {
+    return seat.commanders && seat.commanders.length ? seat.commanders : [I18n.raw("commander")];
+  }
+  function counterLabel(name) {
+    return QUICK_COUNTERS.includes(name) ? t("ctr_" + name) : esc(name);
+  }
+  function podNames(setup) {
+    return setup.seats.map((s) => s.name).join(" · ");
+  }
+  function isLandscape() {
+    return window.innerWidth > window.innerHeight * 1.15;
+  }
+  function random(n) {
+    return Math.floor(Math.random() * n);
+  }
+  function clampLife(v) {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? Math.min(999, Math.max(1, n)) : 40;
+  }
+
+  function toast(html) {
+    const el = $("#toast");
+    el.innerHTML = html;
+    el.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => el.classList.remove("show"), 2400);
+  }
+
+  function openModal(html, cls) {
+    modalRoot.innerHTML = `<div class="modal-back" data-action="closeModal"></div><div class="modal ${cls || ""}" role="dialog" aria-modal="true">${html}</div>`;
+    modalRoot.hidden = false;
+  }
+  function closeModal() {
+    modalRoot.hidden = true;
+    modalRoot.innerHTML = "";
+  }
+  function confirmModal(text, onYes, yesLabel) {
+    confirmCb = onYes;
+    openModal(
+      `<p class="confirm-text">${text}</p>
+       <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button>
+       <button class="btn danger" data-action="confirmYes">${yesLabel || t("confirm")}</button></div>`,
+      "small"
+    );
+  }
+
+  // ---------- Live game: event log, batching and persistence ----------
+
+  function pendingEvents() {
+    return [...pending.values()].map((p) => p.ev);
+  }
+  function liveState() {
+    return Game.derive(game.setup, game.events.concat(pendingEvents()));
+  }
+  function persist() {
+    if (!game) return;
+    game.pending = pendingEvents();
+    Store.saveGame(game);
+  }
+  function push(base) {
+    const st = Game.derive(game.setup, game.events);
+    const ev = { ...base, id: Store.uid(), t: Date.now(), round: st.round };
+    game.events.push(ev);
+    return ev;
+  }
+
+  // Taps on the same counter are merged into one log entry once input pauses.
+  function queue(base, d) {
+    const key = [base.type, base.seat, base.from, base.idx, base.name].join("|");
+    let p = pending.get(key);
+    if (!p) {
+      p = { ev: { ...base, delta: 0 } };
+      pending.set(key, p);
+    }
+    p.ev.delta += d;
+    clearTimeout(p.timer);
+    p.timer = setTimeout(() => commitPending(key), BATCH_MS);
+    persist();
+    render();
+  }
+
+  function commitPending(key, quiet) {
+    const p = pending.get(key);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pending.delete(key);
+    if (p.ev.delta) {
+      const ev = push(p.ev);
+      if (ev.type === "life" && ev.delta < 0 && !quiet) askSource(ev);
+    }
+    persist();
+    if (!quiet) render();
+  }
+
+  function flushAll() {
+    for (const key of [...pending.keys()]) commitPending(key, true);
+  }
+
+  function dispatch(base) {
+    flushAll();
+    ui.attrib = null;
+    const ev = push(base);
+    persist();
+    render();
+    return ev;
+  }
+
+  function askSource(ev) {
+    const st = liveState();
+    const others = st.alive.filter((s) => s !== ev.seat);
+    clearTimeout(attribTimer);
+    if (others.length === 1) {
+      ev.source = others[0];
+      return;
+    }
+    if (!others.length) return;
+    ui.attrib = { seat: ev.seat, evId: ev.id };
+    attribTimer = setTimeout(() => {
+      ui.attrib = null;
+      if (ui.view === "game") render();
+    }, ATTRIB_MS);
+  }
+
+  function newGame(setup) {
+    pending.clear();
+    game = { id: Store.uid(), setup, events: [], pending: [] };
+    persist();
+  }
+
+  function restoreGame() {
+    if (!game) return;
+    for (const ev of game.pending || []) {
+      if (ev.delta) game.events.push({ ...ev, id: Store.uid(), t: Date.now(), round: Game.derive(game.setup, game.events).round });
+    }
+    game.pending = [];
+    Store.saveGame(game);
+  }
+
+  function checkEnd() {
+    const st = liveState();
+    if (st.alive.length <= 1) openEnd();
+  }
+
+  function describe(ev, seats) {
+    const nm = (i) => (seats[i] ? seats[i].name : "?");
+    const name = nm(ev.seat);
+    switch (ev.type) {
+      case "life":
+        return t("ev_life", { name, d: fmtDelta(ev.delta) }) + (Number.isInteger(ev.source) ? t("ev_from", { name: nm(ev.source) }) : "");
+      case "cmd":
+        return t("ev_cmd", { name, d: fmtDelta(ev.delta), src: nm(ev.from), cmd: cmdNames(seats[ev.from] || {})[ev.idx] || "" });
+      case "poison":
+        return t("ev_poison", { name, d: fmtDelta(ev.delta) });
+      case "tax":
+        return t("ev_tax", { name, cmd: cmdNames(seats[ev.seat] || {})[ev.idx] || "", d: fmtDelta(ev.delta) });
+      case "counter":
+        return t("ev_counter", { name, d: fmtDelta(ev.delta), counter: QUICK_COUNTERS.includes(ev.name) ? I18n.raw("ctr_" + ev.name) : ev.name });
+      case "flag":
+        return t(ev.value ? "ev_flagOn" : "ev_flagOff", { name, flag: I18n.raw(ev.flag) });
+      case "token":
+        return t(Number.isInteger(ev.seat) ? "ev_token" : "ev_tokenNone", { name, token: I18n.raw(ev.token) });
+      case "elim":
+        return t("ev_elim", { name, cause: I18n.raw("cause_" + ev.cause) }) + (Number.isInteger(ev.by) && ev.by !== ev.seat ? t("ev_by", { name: nm(ev.by) }) : "");
+      case "turn":
+        return t("ev_turn", { name: nm(ev.to) });
+      case "note":
+        return "📝 " + esc(ev.text);
+    }
+    return esc(ev.type);
+  }
+
+  // ---------- Views ----------
+
+  function header(title, back) {
+    const arrow = I18n.dir() === "rtl" ? "→" : "←";
+    return `<header class="bar"><button class="icon-btn" data-action="nav" data-to="${back || "home"}" aria-label="${t("back")}">${arrow}</button><h1>${title}</h1></header>`;
+  }
+
+  function homeView() {
+    const resume = game
+      ? `<button class="btn primary big" data-action="nav" data-to="game">${t("resumeGame")}<small>${esc(podNames(game.setup))}</small></button>`
+      : "";
+    return `<div class="page home">
+      <div class="hero"><img src="icon.svg" class="logo" alt=""><h1>${t("appName")}</h1><p class="muted">${t("tagline")}</p></div>
+      ${resume}
+      <button class="btn ${game ? "" : "primary"} big" data-action="newSetup">${t("newGame")}</button>
+      <div class="menu-grid">
+        <button class="menu-card" data-action="nav" data-to="players"><b>👥</b><span>${t("playersDecks")}</span></button>
+        <button class="menu-card" data-action="nav" data-to="history"><b>📜</b><span>${t("history")}</span></button>
+        <button class="menu-card" data-action="nav" data-to="stats"><b>📊</b><span>${t("stats")}</span></button>
+        <button class="menu-card" data-action="newManual"><b>✍️</b><span>${t("logPastGame")}</span></button>
+        <button class="menu-card" data-action="nav" data-to="settings"><b>⚙️</b><span>${t("settings")}</span></button>
+      </div>
+      <p class="legal">${t("fanContent")}</p>
+    </div>`;
+  }
+
+  function podChips(selected, action) {
+    const ids = selected.map((s) => s.playerId);
+    const people = [...S.players.filter((p) => !p.guest), ...S.players.filter((p) => p.guest)];
+    if (!people.length) return `<p class="muted">${t("noPlayersYet")}</p>`;
+    return `<div class="chips">${people
+      .map(
+        (p) =>
+          `<button class="chip ${ids.includes(p.id) ? "on" : ""}" data-action="${action}" data-id="${p.id}" style="--c:${esc(p.color)}">${avatar(p)}${esc(p.name)}${p.guest ? `<small>${t("guest")}</small>` : ""}</button>`
+      )
+      .join("")}</div>`;
+  }
+
+  function deckOptions(playerId, selectedId) {
+    return `<option value="">${t("noDeck")}</option>${Store.decksOf(playerId)
+      .map((d) => `<option value="${d.id}" ${d.id === selectedId ? "selected" : ""}>${esc(d.name)}</option>`)
+      .join("")}`;
+  }
+
+  function seatMap(seats) {
+    const n = seats.length;
+    if (n < Game.MIN_PLAYERS) return `<div class="seatmap empty">${t("pickPlayersHint")}</div>`;
+    const L = Game.layout(n, false);
+    return `<div class="seatmap" style="grid-template-rows:${L.rows};grid-template-columns:${L.cols}">${seats
+      .map((s, i) => {
+        const p = Store.player(s.playerId);
+        const [row, col, rot] = L.seats[i];
+        return `<button class="seat ${ui.swapPick === i ? "picked" : ""}" style="grid-row:${row};grid-column:${col};--c:${esc(p.color)}" data-action="seatTap" data-seat="${i}"><span class="seat-in r${rot}">${avatar(p)}<span>${esc(p.name)}</span></span></button>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function setupView() {
+    const su = ui.setup;
+    const n = su.seats.length;
+    const decks = su.quick
+      ? ""
+      : su.seats
+          .map((s, i) => {
+            const p = Store.player(s.playerId);
+            return `<label class="row">${avatar(p)}<span class="grow">${esc(p.name)}</span><select data-change="seatDeck" data-seat="${i}">${deckOptions(p.id, s.deckId)}</select></label>`;
+          })
+          .join("");
+    const firstOpts = su.seats
+      .map((s, i) => `<option value="${i}" ${String(su.first) === String(i) ? "selected" : ""}>${esc(Store.player(s.playerId).name)}</option>`)
+      .join("");
+    return `${header(t("newGame"))}
+    <div class="page">
+      <section><h2>${t("whoPlays")} <small class="muted">${n}/${Game.MAX_PLAYERS}</small></h2>
+        ${podChips(su.seats, "togglePod")}
+        <form class="inline" data-submit="addGuest"><input id="guestName" placeholder="${t("guestName")}" maxlength="24" autocomplete="off"><button class="btn">${t("addGuest")}</button></form>
+      </section>
+      <section><h2>${t("seating")}</h2><p class="muted small">${t("seatHint")}</p>${seatMap(su.seats)}</section>
+      ${n ? `<section><h2>${t("decks")}</h2>
+        <label class="row"><input type="checkbox" data-change="quick" ${su.quick ? "checked" : ""}><span>${t("quickGame")}</span></label>
+        ${decks}</section>` : ""}
+      <section class="two">
+        <label class="field"><span>${t("startingLife")}</span><input type="number" inputmode="numeric" min="1" max="999" value="${su.startingLife}" data-change="startLife"></label>
+        <label class="field"><span>${t("firstPlayer")}</span><select data-change="first"><option value="random">🎲 ${t("random")}</option>${firstOpts}</select></label>
+      </section>
+      <button class="btn primary big" data-action="startGame" ${n < Game.MIN_PLAYERS ? "disabled" : ""}>${t("startGame")}</button>
+    </div>`;
+  }
+
+  function pendingLife(seat) {
+    let d = 0;
+    for (const { ev } of pending.values()) {
+      if (ev.seat !== seat) continue;
+      if (ev.type === "life") d += ev.delta;
+      if (ev.type === "cmd") d -= ev.delta;
+    }
+    return d;
+  }
+
+  function tileHtml(seat, i, st, pos) {
+    const p = st.players[i];
+    const rot = pos[2];
+    const badges = [];
+    if (st.monarch === i) badges.push(`<span class="badge" title="${t("monarch")}">👑</span>`);
+    if (st.initiative === i) badges.push(`<span class="badge" title="${t("initiative")}">🏰</span>`);
+    if (p.poison) badges.push(`<span class="badge poison">☠ ${p.poison}</span>`);
+    const topCmd = Math.max(0, ...Object.values(p.cmd));
+    if (topCmd) badges.push(`<span class="badge">⚔ ${topCmd}</span>`);
+    p.tax.forEach((casts) => {
+      if (casts) badges.push(`<span class="badge">${t("taxShort")} +${casts * 2}</span>`);
+    });
+    for (const [name, v] of Object.entries(p.counters)) if (v) badges.push(`<span class="badge">${counterLabel(name)} ${v}</span>`);
+    if (p.cantLose) badges.push(`<span class="badge" title="${t("cantLose")}">🛡</span>`);
+    if (p.cantWin) badges.push(`<span class="badge" title="${t("cantWin")}">🚫</span>`);
+
+    const pend = pendingLife(i);
+    const deck = seat.deckName ? `<span class="deck">${esc(seat.deckName)}</span>` : "";
+    const lethal =
+      p.lethal && !p.out
+        ? `<div class="lethal-bar"><span>${t("lethal_" + p.lethal.cause)}</span><button class="btn small danger" data-action="elimPrompt" data-seat="${i}">${t("eliminate")}</button></div>`
+        : "";
+    const out = p.out
+      ? `<div class="out-cover"><b>${t("out")}</b><span>${t("cause_" + p.out.cause)}${Number.isInteger(p.out.by) && p.out.by !== i ? " · " + esc(game.setup.seats[p.out.by].name) : ""}</span></div>`
+      : "";
+    return `<div class="tile ${i === st.active ? "active" : ""} ${p.out ? "out" : ""} ${p.lethal ? "lethal" : ""}" style="grid-row:${pos[0]};grid-column:${pos[1]}">
+      <div class="tile-inner r${rot}" style="--c:${esc(seat.color)}">
+        <div class="life-wrap">
+          <button class="zone minus" data-life="-1" data-seat="${i}" aria-label="−1"><span>−</span></button>
+          <button class="zone plus" data-life="1" data-seat="${i}" aria-label="+1"><span>+</span></button>
+          <div class="life">${p.life}${pend ? `<span class="pending">${fmtDelta(pend)}</span>` : ""}</div>
+        </div>
+        ${badges.length ? `<div class="tile-foot">${badges.join("")}</div>` : ""}
+        <div class="tile-head">${avatar(seat)}<span class="who">${esc(seat.name)}</span>${deck}<button class="more" data-action="panel" data-seat="${i}" aria-label="${t("more")}">⋯</button></div>
+        ${lethal}${out}
+        ${ui.attrib && ui.attrib.seat === i ? attribStrip(i, st) : ""}
+        ${ui.panel === i ? panelHtml(i, st) : ""}
+      </div>
+    </div>`;
+  }
+
+  function attribStrip(i, st) {
+    const seats = game.setup.seats;
+    const others = st.alive.filter((s) => s !== i);
+    return `<div class="attrib"><span>${t("fromWhom")}</span>${others
+      .map((j) => `<button class="av" data-action="attrib" data-src="${j}" title="${esc(seats[j].name)}">${avatar(seats[j])}</button>`)
+      .join("")}<button class="av skip" data-action="attrib" data-src="">?</button></div>`;
+  }
+
+  function stepRow(label, value, attrs) {
+    return `<div class="prow"><span class="plabel">${label}</span><button class="step" ${attrs} data-d="-1" ${value <= 0 ? "disabled" : ""}>−</button><span class="pval">${value}</span><button class="step" ${attrs} data-d="1">+</button></div>`;
+  }
+
+  function panelHtml(i, st) {
+    const p = st.players[i];
+    const seats = game.setup.seats;
+    const cmdRows = seats
+      .flatMap((s, j) =>
+        cmdNames(s).map((name, idx) =>
+          stepRow(`${avatar(s)}<span>${esc(name)}${j === i ? ` <small>(${t("own")})</small>` : ""}</span>`, p.cmd[j + ":" + idx] || 0, `data-action="cmd" data-seat="${i}" data-from="${j}" data-idx="${idx}"`)
+        )
+      )
+      .join("");
+    const taxRows = cmdNames(seats[i])
+      .map((name, idx) => stepRow(`<span>${esc(name)} <small>(+${p.tax[idx] * 2})</small></span>`, p.tax[idx], `data-action="tax" data-seat="${i}" data-idx="${idx}"`))
+      .join("");
+    const counterRows = Object.entries(p.counters)
+      .map(([name, v]) => stepRow(`<span>${counterLabel(name)}</span>`, v, `data-action="counter" data-seat="${i}" data-name="${esc(name)}"`))
+      .join("");
+    const quick = QUICK_COUNTERS.filter((c) => !(c in p.counters))
+      .map((c) => `<button class="chip" data-action="counter" data-seat="${i}" data-name="${c}" data-d="1">+ ${t("ctr_" + c)}</button>`)
+      .join("");
+    const tokenBtn = (token, icon) =>
+      `<button class="chip ${st[token] === i ? "on" : ""}" data-action="token" data-token="${token}" data-seat="${i}">${icon} ${t(token)}</button>`;
+    const flagBtn = (flag, icon) => `<button class="chip ${p[flag] ? "on" : ""}" data-action="flag" data-flag="${flag}" data-seat="${i}">${icon} ${t(flag)}</button>`;
+    return `<div class="panel">
+      <div class="panel-head">${avatar(seats[i])}<b class="grow">${esc(seats[i].name)}</b><button class="icon-btn" data-action="panel" data-seat="${i}" aria-label="${t("close")}">✕</button></div>
+      <div class="panel-body">
+        <h3>${t("cmdDamageTaken")}</h3>${cmdRows}
+        <h3>${t("poison")}</h3>${stepRow(`<span>☠ ${t("poison")}</span>`, p.poison, `data-action="poison" data-seat="${i}"`)}
+        <h3>${t("commanderTax")}</h3>${taxRows}
+        <h3>${t("tokens")}</h3><div class="chips">${tokenBtn("monarch", "👑")}${tokenBtn("initiative", "🏰")}</div>
+        <h3>${t("counters")}</h3>${counterRows}
+        <div class="chips">${quick}</div>
+        <form class="inline" data-submit="addCounter" data-seat="${i}"><input name="cname" placeholder="${t("customCounter")}" maxlength="16" autocomplete="off"><button class="btn small">+</button></form>
+        <h3>${t("flags")}</h3><div class="chips">${flagBtn("cantLose", "🛡")}${flagBtn("cantWin", "🚫")}</div>
+        <div class="actions">${p.out ? "" : `<button class="btn small" data-action="concede" data-seat="${i}">🏳 ${t("concede")}</button><button class="btn small danger" data-action="elimPrompt" data-seat="${i}">${t("eliminate")}</button>`}</div>
+      </div>
+    </div>`;
+  }
+
+  function hubHtml(st, rot) {
+    const a = game.setup.seats[st.active];
+    const timer = S.settings.turnTimer ? `<span class="timer" id="turnTimer">${fmtClock(Date.now() - st.turnStartedAt)}</span>` : "";
+    return `<div class="hub r${rot}">
+      <button class="hub-btn" data-action="undo" aria-label="${t("undo")}" ${game.events.some((e) => !e.reverted) || pending.size ? "" : "disabled"}>↶</button>
+      <button class="hub-mid" data-action="nextTurn" style="--c:${esc(a.color)}"><span class="round">${t("roundN", { n: st.round })}${timer}</span><span class="act">${esc(a.name)}</span><span class="next">${t("nextTurn")} ▸</span></button>
+      <button class="hub-btn" data-action="menu" aria-label="${t("menu")}">☰</button>
+    </div>`;
+  }
+
+  function gameView() {
+    const st = liveState();
+    const n = game.setup.seats.length;
+    const L = Game.layout(n, isLandscape());
+    const tiles = game.setup.seats.map((s, i) => tileHtml(s, i, st, L.seats[i])).join("");
+    return `<div class="board ${S.settings.dimInactive ? "dim" : ""}" style="grid-template-rows:${L.rows};grid-template-columns:${L.cols}">${tiles}</div>${ui.panel == null ? hubHtml(st, L.seats[st.active][2]) : ""}`;
+  }
+
+  function playersView() {
+    const regulars = S.players.filter((p) => !p.guest);
+    const guests = S.players.filter((p) => p.guest);
+    const gamesOf = (id) => S.matches.filter((m) => m.seats.some((s) => s.playerId === id)).length;
+    const item = (p) =>
+      `<button class="list-item" data-action="nav" data-to="player" data-id="${p.id}">${avatar(p)}<span class="grow"><b>${esc(p.name)}</b><small class="muted">${t("nDecks", { n: Store.decksOf(p.id).length })} · ${t("nGames", { n: gamesOf(p.id) })}</small></span><span class="chev">›</span></button>`;
+    return `${header(t("playersDecks"))}
+    <div class="page">
+      <section>${regulars.map(item).join("") || `<p class="muted">${t("noPlayersYet")}</p>`}
+        <button class="btn primary" data-action="addPlayer">+ ${t("addPlayer")}</button></section>
+      ${guests.length ? `<section><h2>${t("guests")}</h2><p class="muted small">${t("guestHint")}</p>${guests
+        .map(
+          (g) =>
+            `<div class="list-item">${avatar(g)}<span class="grow"><b>${esc(g.name)}</b><small class="muted">${t("nGames", { n: gamesOf(g.id) })}</small></span>
+            <button class="btn small" data-action="promoteGuest" data-id="${g.id}">${t("makeRegular")}</button>
+            ${regulars.length ? `<button class="btn small" data-action="mergeGuest" data-id="${g.id}">${t("mergeInto")}</button>` : ""}</div>`
+        )
+        .join("")}</section>` : ""}
+    </div>`;
+  }
+
+  function playerView() {
+    const p = Store.player(ui.params.id);
+    if (!p) return playersView();
+    const decks = Store.decksOf(p.id);
+    return `${header(esc(p.name), "players")}
+    <div class="page">
+      <section>
+        <label class="field"><span>${t("name")}</span><input value="${esc(p.name)}" maxlength="24" data-change="pName" autocomplete="off"></label>
+        <h3>${t("color")}</h3><div class="swatches">${COLORS.map((c) => `<button class="swatch ${p.color === c ? "on" : ""}" style="--c:${c}" data-action="pColor" data-v="${c}" aria-label="${c}"></button>`).join("")}</div>
+        <h3>${t("avatar")}</h3><div class="swatches">${AVATARS.map((a) => `<button class="emoji ${p.avatar === a ? "on" : ""}" data-action="pAvatar" data-v="${a}">${a}</button>`).join("")}
+          <input class="emoji-in" value="${AVATARS.includes(p.avatar) ? "" : esc(p.avatar)}" maxlength="4" placeholder="Aa" data-change="pAvatarCustom" aria-label="${t("avatar")}"></div>
+      </section>
+      <section><h2>${t("decks")}</h2>
+        ${decks
+          .map(
+            (d) =>
+              `<button class="list-item" data-action="openDeck" data-id="${d.id}">${d.art ? `<img class="art" src="${esc(d.art)}" alt="" loading="lazy">` : ""}<span class="grow"><b>${esc(d.name)}</b><small class="muted">${esc(d.commanders.filter(Boolean).join(" + "))}</small></span>${pips(d.colors)}${d.bracket ? `<span class="tag">B${d.bracket}</span>` : ""}</button>`
+          )
+          .join("") || `<p class="muted">${t("noDecksYet")}</p>`}
+        <button class="btn primary" data-action="openDeck" data-owner="${p.id}">+ ${t("addDeck")}</button>
+      </section>
+      <button class="btn danger" data-action="deletePlayer" data-id="${p.id}">${t("deletePlayer")}</button>
+    </div>`;
+  }
+
+  function deckModal() {
+    const d = ui.deck;
+    const owner = Store.player(d.ownerId);
+    openModal(
+      `<h2>${d.id ? t("editDeck") : t("addDeck")} <small class="muted">${esc(owner ? owner.name : "")}</small></h2>
+      <label class="field"><span>${t("commander")}</span><input id="dC1" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[0] || "")}" autocomplete="off" placeholder="${t("searchScryfall")}"></label>
+      <label class="field"><span>${t("partner")}</span><input id="dC2" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[1] || "")}" autocomplete="off" placeholder="${t("optional")}"></label>
+      <datalist id="cmdList"></datalist>
+      ${d.warn ? `<p class="warn">${d.warn}</p>` : ""}
+      <label class="field"><span>${t("deckName")}</span><input id="dName" value="${esc(d.name)}" maxlength="40" placeholder="${esc(d.commanders[0] || "")}" autocomplete="off"></label>
+      <div class="field"><span>${t("colorIdentity")}</span><div class="chips">${MANA.map((c) => `<button class="mana ${d.colors.includes(c) ? "on" : ""}" data-action="dColor" data-v="${c}"><i class="pip pip-${c}"></i></button>`).join("")}</div></div>
+      <label class="field"><span>${t("bracket")} <small class="muted">${t("bracketHint")}</small></span><select id="dBracket"><option value="">—</option>${[1, 2, 3, 4, 5]
+        .map((b) => `<option value="${b}" ${d.bracket === b ? "selected" : ""}>${b}</option>`)
+        .join("")}</select></label>
+      <label class="field"><span>${t("decklist")} <small class="muted">${t("optional")}</small></span><textarea id="dList" rows="4">${esc(d.list || "")}</textarea></label>
+      <div class="actions">${d.id ? `<button class="btn danger" data-action="deckDelete">${t("delete")}</button>` : ""}<span class="grow"></span>
+        <button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="deckSave">${t("save")}</button></div>`
+    );
+  }
+
+  function readDeckForm() {
+    const d = ui.deck;
+    const v = (id) => ($(id) ? $(id).value.trim() : "");
+    d.commanders = [v("#dC1"), v("#dC2")].filter(Boolean);
+    d.name = v("#dName");
+    d.list = $("#dList") ? $("#dList").value : d.list;
+    d.bracket = v("#dBracket") ? Number(v("#dBracket")) : null;
+  }
+
+  function historyView() {
+    const list = [...S.matches].sort((a, b) => b.date - a.date);
+    return `${header(t("history"))}
+    <div class="page">${list
+      .map((m) => {
+        const w = Number.isInteger(m.winnerSeat) ? m.seats[m.winnerSeat] : null;
+        return `<button class="list-item" data-action="nav" data-to="match" data-id="${m.id}"><span class="grow"><b>${w ? "🏆 " + esc(w.name) + (w.deckName ? ` <small>· ${esc(w.deckName)}</small>` : "") : t("noWinner")}</b>
+          <small class="muted">${fmtDate(m.date)} · ${esc(m.seats.map((s) => s.name).join(", "))}${m.rounds ? " · " + t("roundsN", { n: m.rounds }) : ""}${m.manual ? " · " + t("loggedAfter") : ""}</small></span><span class="chev">›</span></button>`;
+      })
+      .join("") || `<p class="muted">${t("noMatchesYet")}</p>`}</div>`;
+  }
+
+  function matchView() {
+    const m = S.matches.find((x) => x.id === ui.params.id);
+    if (!m) return historyView();
+    const n = m.seats.length;
+    const elim = {};
+    for (const e of m.eliminations || []) elim[e.seat] = e;
+    const seatRows = m.seats
+      .map((s, i) => {
+        const e = elim[i];
+        const fate = m.winnerSeat === i ? `🏆 ${t("winner")}` : e ? `${t("cause_" + e.cause)}${Number.isInteger(e.by) && e.by !== i ? " · " + esc(m.seats[e.by].name) : ""}${e.round ? " · " + t("roundN", { n: e.round }) : ""}` : "";
+        return `<tr><td>${i === m.firstSeat ? "🎲 " : ""}${esc(s.name)}</td><td>${esc(s.deckName || "—")}</td><td>${m.finalLife ? m.finalLife[i] : ""}</td><td>${fate}</td></tr>`;
+      })
+      .join("");
+    const dmg =
+      m.damage && m.damage.some((r) => r.some(Boolean))
+        ? `<section><h2>${t("damageMatrix")}</h2><p class="muted small">${t("damageHint")}</p><div class="scroll-x"><table class="matrix"><tr><th></th>${m.seats.map((s) => `<th>${esc(s.name)}</th>`).join("")}</tr>${m.damage
+            .map((row, i) => `<tr><th>${esc(m.seats[i].name)}</th>${row.map((v, j) => `<td class="${i === j ? "self" : ""}">${v || ""}</td>`).join("")}</tr>`)
+            .join("")}</table></div></section>`
+        : "";
+    const notes = (m.notes || []).length ? `<section><h2>${t("notes")}</h2>${m.notes.map((x) => `<p class="note">📝 ${esc(x)}</p>`).join("")}</section>` : "";
+    const log = (m.events || []).length
+      ? `<details><summary>${t("actionLog")} (${m.events.length})</summary><ol class="log">${m.events.map((e) => `<li><small>${t("roundShort", { n: e.round })} · ${fmtTime(e.t)}</small> ${describe(e, m.seats)}</li>`).join("")}</ol></details>`
+      : "";
+    return `${header(fmtDate(m.date), "history")}
+    <div class="page">
+      <section class="facts">
+        <div><b>${Number.isInteger(m.winnerSeat) ? esc(m.seats[m.winnerSeat].name) : "—"}</b><small>${m.winType ? t("win_" + m.winType) : t("winner")}</small></div>
+        <div><b>${m.rounds || "—"}</b><small>${t("rounds")}</small></div>
+        <div><b>${m.durationMin ? m.durationMin + "′" : "—"}</b><small>${t("duration")}</small></div>
+        <div><b>${n}</b><small>${t("players")}</small></div>
+      </section>
+      <section><div class="scroll-x"><table><tr><th>${t("player")}</th><th>${t("deck")}</th><th>${t("life")}</th><th></th></tr>${seatRows}</table></div></section>
+      ${dmg}${notes}${log}
+      <button class="btn danger" data-action="deleteMatch" data-id="${m.id}">${t("deleteMatch")}</button>
+    </div>`;
+  }
+
+  function manualView() {
+    const mu = ui.manual;
+    const rows = mu.seats
+      .map((s, i) => {
+        const p = Store.player(s.playerId);
+        return `<div class="row">${avatar(p)}<span class="grow">${esc(p.name)}</span><select data-change="manDeck" data-seat="${i}">${deckOptions(p.id, s.deckId)}</select>
+        <button class="chip ${mu.winner === i ? "on" : ""}" data-action="manWinner" data-seat="${i}">🏆</button></div>`;
+      })
+      .join("");
+    return `${header(t("logPastGame"))}
+    <div class="page">
+      <section><h2>${t("whoPlayed")}</h2>${podChips(mu.seats, "manToggle")}</section>
+      ${mu.seats.length ? `<section><h2>${t("decksAndWinner")}</h2><p class="muted small">${t("seatOrderHint")}</p>${rows}</section>` : ""}
+      <section class="two">
+        <label class="field"><span>${t("date")}</span><input type="date" value="${mu.date}" data-change="manDate"></label>
+        <label class="field"><span>${t("rounds")} <small class="muted">${t("optional")}</small></span><input type="number" min="1" inputmode="numeric" value="${mu.rounds}" data-change="manRounds"></label>
+      </section>
+      <button class="btn primary big" data-action="manSave" ${mu.seats.length < Game.MIN_PLAYERS ? "disabled" : ""}>${t("saveMatch")}</button>
+    </div>`;
+  }
+
+  function statsView() {
+    const s = Stats.compute(S.matches);
+    if (!s.games) return `${header(t("stats"))}<div class="page"><p class="muted">${t("noMatchesYet")}</p></div>`;
+    const pname = (r) => {
+      const p = Store.player(r.id);
+      return esc(p ? p.name : r.name);
+    };
+    const dname = (r) => {
+      const d = Store.deck(r.id);
+      const owner = Store.player(r.ownerId);
+      return `${esc(d ? d.name : r.name)}${owner ? ` <small class="muted">${esc(owner.name)}</small>` : ""}`;
+    };
+    const bar = (r) => `<span class="bar-cell"><i style="width:${pct(Stats.rate(r))}"></i></span>${pct(Stats.rate(r))}`;
+    const posTable = (rows, label) =>
+      rows.length
+        ? `<table><tr><th>${label}</th><th>${t("games")}</th><th>${t("wins")}</th><th>${t("winRate")}</th></tr>${rows
+            .map((r, i) => `<tr><td>${i + 1}</td><td>${r.games}</td><td>${r.wins}</td><td>${bar(r)}</td></tr>`)
+            .join("")}</table>`
+        : "";
+    const fmt1 = (x) => (x == null ? "—" : (Math.round(x * 10) / 10).toLocaleString(locale()));
+    return `${header(t("stats"))}
+    <div class="page">
+      <section class="facts">
+        <div><b>${s.games}</b><small>${t("games")}</small></div>
+        <div><b>${fmt1(s.avgRounds)}</b><small>${t("avgRounds")}</small></div>
+        <div><b>${s.avgMinutes == null ? "—" : Math.round(s.avgMinutes) + "′"}</b><small>${t("avgMinutes")}</small></div>
+      </section>
+      <section class="facts">
+        <div><b>${s.mostDamage ? pname(s.mostDamage) : "—"}</b><small>${t("mostDamage")}${s.mostDamage ? ` · ${s.mostDamage.damage}` : ""}</small></div>
+        <div><b>${s.mostKnockouts ? pname(s.mostKnockouts) : "—"}</b><small>${t("mostKnockouts")}${s.mostKnockouts ? ` · ${s.mostKnockouts.knockouts}` : ""}</small></div>
+      </section>
+      <section><h2>${t("players")}</h2><div class="scroll-x"><table><tr><th>${t("player")}</th><th>${t("games")}</th><th>${t("wins")}</th><th>${t("winRate")}</th><th>⚔</th><th>💀</th></tr>${s.players
+        .map((r) => `<tr><td>${pname(r)}</td><td>${r.games}</td><td>${r.wins}</td><td>${bar(r)}</td><td>${r.damage}</td><td>${r.knockouts}</td></tr>`)
+        .join("")}</table></div><p class="muted small">⚔ ${t("damageDealt")} · 💀 ${t("knockouts")}</p></section>
+      ${s.decks.length ? `<section><h2>${t("decks")}</h2><div class="scroll-x"><table><tr><th>${t("deck")}</th><th>${t("games")}</th><th>${t("wins")}</th><th>${t("winRate")}</th></tr>${s.decks
+        .map((r) => `<tr><td>${dname(r)}</td><td>${r.games}</td><td>${r.wins}</td><td>${bar(r)}</td></tr>`)
+        .join("")}</table></div></section>` : ""}
+      ${s.turnOrder.length ? `<section><h2>${t("winsByTurnOrder")}</h2>${posTable(s.turnOrder, t("turnPosition"))}</section>` : ""}
+      <section><h2>${t("winsBySeat")}</h2><p class="muted small">${t("seatStatHint")}</p>${posTable(s.seats, t("seat"))}</section>
+    </div>`;
+  }
+
+  function settingsView() {
+    const st = S.settings;
+    const toggle = (key) => `<label class="row"><input type="checkbox" data-change="setToggle" data-key="${key}" ${st[key] ? "checked" : ""}><span class="grow">${t("set_" + key)}<small class="muted">${t("set_" + key + "_hint")}</small></span></label>`;
+    return `${header(t("settings"))}
+    <div class="page">
+      <section>
+        <label class="field"><span>${t("language")}</span><select data-change="lang"><option value="en" ${st.lang === "en" ? "selected" : ""}>English</option><option value="he" ${st.lang === "he" ? "selected" : ""}>עברית</option></select></label>
+        <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
+        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}
+      </section>
+      <section><h2>${t("backup")}</h2><p class="muted small">${t("backupHint")}</p>
+        <div class="actions"><button class="btn" data-action="exportData">⬇ ${t("export")}</button>
+        <label class="btn">⬆ ${t("import")}<input type="file" accept="application/json,.json" data-change="importFile" hidden></label></div>
+      </section>
+      <section><button class="btn danger" data-action="eraseAll">${t("eraseAll")}</button></section>
+      <p class="legal">${t("fanContent")}</p>
+    </div>`;
+  }
+
+  const VIEWS = {
+    home: homeView,
+    setup: setupView,
+    game: gameView,
+    players: playersView,
+    player: playerView,
+    history: historyView,
+    match: matchView,
+    manual: manualView,
+    stats: statsView,
+    settings: settingsView,
+  };
+
+  function render() {
+    I18n.setLang(S.settings.lang);
+    if (ui.view === "game" && !game) ui.view = "home";
+    if (ui.view === "setup" && !ui.setup) ui.view = "home";
+    if (ui.view === "manual" && !ui.manual) ui.view = "home";
+    const oldPanel = app.querySelector(".panel-body");
+    const scroll = oldPanel ? oldPanel.scrollTop : 0;
+    app.className = "view-" + ui.view;
+    app.innerHTML = VIEWS[ui.view]();
+    const newPanel = app.querySelector(".panel-body");
+    if (newPanel) newPanel.scrollTop = scroll;
+  }
+
+  function go(view, params) {
+    ui.view = view;
+    ui.params = params || {};
+    ui.panel = null;
+    ui.attrib = null;
+    closeModal();
+    render();
+    window.scrollTo(0, 0);
+    updateWake();
+  }
+
+  // ---------- Game modals ----------
+
+  function openMenu() {
+    const canReroll = !game.events.length && !pending.size;
+    openModal(
+      `<h2>${t("menu")}</h2>
+      <div class="menu-list">
+        <button class="btn" data-action="showLog">📜 ${t("actionLog")}</button>
+        <button class="btn" data-action="noteModal">📝 ${t("addNote")}</button>
+        <button class="btn" data-action="tokenModal" data-token="monarch">👑 ${t("monarch")}</button>
+        <button class="btn" data-action="tokenModal" data-token="initiative">🏰 ${t("initiative")}</button>
+        ${canReroll ? `<button class="btn" data-action="reroll">🎲 ${t("rerollFirst")}</button>` : ""}
+        <button class="btn primary" data-action="endPrompt">🏁 ${t("endGame")}</button>
+        <button class="btn" data-action="restartGame">🔄 ${t("newGameSamePod")}</button>
+        <button class="btn" data-action="nav" data-to="home">🏠 ${t("home")}</button>
+        <button class="btn danger" data-action="discardGame">🗑 ${t("discardGame")}</button>
+      </div>`,
+      "small"
+    );
+  }
+
+  function showLog() {
+    const seats = game.setup.seats;
+    const rows = [...game.events]
+      .reverse()
+      .map(
+        (e) =>
+          `<li><button class="log-item ${e.reverted ? "reverted" : ""}" data-action="logToggle" data-id="${e.id}"><small>${t("roundShort", { n: e.round })} · ${fmtTime(e.t)}</small><span>${describe(e, seats)}</span><em>${e.reverted ? t("restore") : t("revert")}</em></button></li>`
+      )
+      .join("");
+    openModal(`<h2>${t("actionLog")}</h2><p class="muted small">${t("logHint")}</p><ol class="log">${rows || `<li class="muted">${t("logEmpty")}</li>`}</ol><div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`);
+  }
+
+  function noteModal() {
+    openModal(
+      `<h2>${t("addNote")}</h2>
+      <div class="chips">${NOTE_TAGS.map((tag) => `<button class="chip" data-action="noteTag" data-v="${t("tag_" + tag)}">${t("tag_" + tag)}</button>`).join("")}</div>
+      <textarea id="noteText" rows="3" maxlength="280" placeholder="${t("notePlaceholder")}"></textarea>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="noteSave">${t("save")}</button></div>`,
+      "small"
+    );
+    setTimeout(() => $("#noteText") && $("#noteText").focus(), 50);
+  }
+
+  function tokenModal(token) {
+    const st = liveState();
+    openModal(
+      `<h2>${t(token)}</h2><div class="chips">${st.alive
+        .map((i) => `<button class="chip ${st[token] === i ? "on" : ""}" data-action="tokenSet" data-token="${token}" data-seat="${i}">${avatar(game.setup.seats[i])}${esc(game.setup.seats[i].name)}</button>`)
+        .join("")}<button class="chip ${st[token] == null ? "on" : ""}" data-action="tokenSet" data-token="${token}" data-seat="">${t("nobody")}</button></div>`,
+      "small"
+    );
+  }
+
+  function guessKiller(seat) {
+    for (let k = game.events.length - 1; k >= 0; k--) {
+      const e = game.events[k];
+      if (e.reverted || e.seat !== seat) continue;
+      if (e.type === "life" && Number.isInteger(e.source)) return e.source;
+      if (e.type === "cmd" && e.from !== seat) return e.from;
+    }
+    return null;
+  }
+
+  function showElim() {
+    const { seat, cause, by } = ui.elim;
+    const seats = game.setup.seats;
+    const st = liveState();
+    const others = st.alive.filter((s) => s !== seat);
+    openModal(
+      `<h2>${t("eliminateX", { name: seats[seat].name })}</h2>
+      <h3>${t("how")}</h3><div class="chips">${CAUSES.map((c) => `<button class="chip ${cause === c ? "on" : ""}" data-action="elimCause" data-v="${c}">${t("cause_" + c)}</button>`).join("")}</div>
+      <h3>${t("byWhom")}</h3><div class="chips">${others
+        .map((j) => `<button class="chip ${by === j ? "on" : ""}" data-action="elimBy" data-v="${j}">${avatar(seats[j])}${esc(seats[j].name)}</button>`)
+        .join("")}<button class="chip ${by == null ? "on" : ""}" data-action="elimBy" data-v="">${t("unknown")}</button></div>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn danger" data-action="elimConfirm">${t("eliminate")}</button></div>`,
+      "small"
+    );
+  }
+
+  function openEnd() {
+    flushAll();
+    const st = liveState();
+    if (!ui.end) ui.end = { winner: st.alive.length === 1 ? st.alive[0] : null, winType: st.alive.length === 1 ? "last" : "alt" };
+    const { winner, winType } = ui.end;
+    const seats = game.setup.seats;
+    openModal(
+      `<h2>🏁 ${t("gameOver")}</h2>
+      <section class="facts"><div><b>${st.round}</b><small>${t("rounds")}</small></div><div><b>${fmtClock(Date.now() - game.setup.startedAt)}</b><small>${t("duration")}</small></div><div><b>${st.knockouts.reduce((a, b) => a + b, 0)}</b><small>${t("knockouts")}</small></div></section>
+      <h3>${t("winner")}</h3><div class="chips">${seats
+        .map((s, i) => `<button class="chip ${winner === i ? "on" : ""}" data-action="endWinner" data-v="${i}">${avatar(s)}${esc(s.name)}<small>${st.players[i].out ? t("out") : st.players[i].life}</small></button>`)
+        .join("")}<button class="chip ${winner == null ? "on" : ""}" data-action="endWinner" data-v="">${t("noWinner")}</button></div>
+      <h3>${t("winType")}</h3><div class="chips">${WIN_TYPES.map((w) => `<button class="chip ${winType === w ? "on" : ""}" data-action="endType" data-v="${w}">${t("win_" + w)}</button>`).join("")}</div>
+      <div class="actions"><button class="btn" data-action="endCancel">${t("keepPlaying")}</button><button class="btn primary" data-action="endSave">${t("saveMatch")}</button></div>`,
+      "small"
+    );
+  }
+
+  function eliminate(seat, by, cause) {
+    dispatch({ type: "elim", seat, by, cause });
+    ui.panel = null;
+    closeModal();
+    render();
+    checkEnd();
+  }
+
+  function startFrom(setupLike) {
+    newGame(setupLike);
+    const first = game.setup.seats[game.setup.firstSeat];
+    go("game");
+    toast(`🎲 ${t("goesFirst", { name: first.name })}`);
+  }
+
+  // ---------- Actions (click), changes and form submits ----------
+
+  const A = {
+    nav: (el) => go(el.dataset.to, { id: el.dataset.id }),
+    closeModal: () => {
+      closeModal();
+      ui.end = null;
+    },
+    confirmYes: () => {
+      const cb = confirmCb;
+      confirmCb = null;
+      closeModal();
+      if (cb) cb();
+    },
+
+    newSetup: () => {
+      const begin = () => {
+        ui.setup = { seats: [], startingLife: S.settings.startingLife, quick: false, first: "random" };
+        ui.swapPick = null;
+        go("setup");
+      };
+      if (game) confirmModal(t("confirmReplaceGame"), begin, t("newGame"));
+      else begin();
+    },
+    togglePod: (el) => {
+      const su = ui.setup;
+      const idx = su.seats.findIndex((s) => s.playerId === el.dataset.id);
+      if (idx >= 0) su.seats.splice(idx, 1);
+      else if (su.seats.length < Game.MAX_PLAYERS) su.seats.push({ playerId: el.dataset.id, deckId: defaultDeck(el.dataset.id) });
+      else toast(t("maxPlayers"));
+      if (su.first !== "random" && Number(su.first) >= su.seats.length) su.first = "random";
+      ui.swapPick = null;
+      render();
+    },
+    seatTap: (el) => {
+      const i = Number(el.dataset.seat);
+      if (ui.swapPick == null) ui.swapPick = i;
+      else {
+        const seats = ui.setup.seats;
+        [seats[ui.swapPick], seats[i]] = [seats[i], seats[ui.swapPick]];
+        ui.swapPick = null;
+      }
+      render();
+    },
+    startGame: () => {
+      const su = ui.setup;
+      const n = su.seats.length;
+      if (n < Game.MIN_PLAYERS) return;
+      const seats = su.seats.map((s) => {
+        const p = Store.player(s.playerId);
+        const d = su.quick ? null : Store.deck(s.deckId);
+        return {
+          playerId: p.id,
+          name: p.name,
+          color: p.color,
+          avatar: p.avatar,
+          deckId: d ? d.id : null,
+          deckName: d ? d.name : "",
+          commanders: d ? d.commanders.filter(Boolean) : [],
+        };
+      });
+      const firstSeat = su.first === "random" ? random(n) : Number(su.first);
+      startFrom({ startedAt: Date.now(), startingLife: clampLife(su.startingLife), seats, firstSeat, firstMode: su.first, quick: su.quick });
+    },
+
+    panel: (el) => {
+      const i = Number(el.dataset.seat);
+      ui.panel = ui.panel === i ? null : i;
+      render();
+    },
+    attrib: (el) => {
+      if (!ui.attrib) return;
+      const ev = game.events.find((e) => e.id === ui.attrib.evId);
+      if (ev) ev.source = el.dataset.src === "" ? null : Number(el.dataset.src);
+      ui.attrib = null;
+      clearTimeout(attribTimer);
+      persist();
+      render();
+    },
+    cmd: (el) => {
+      const seat = Number(el.dataset.seat);
+      const from = Number(el.dataset.from);
+      const idx = Number(el.dataset.idx);
+      const d = Number(el.dataset.d);
+      const cur = liveState().players[seat].cmd[from + ":" + idx] || 0;
+      if (cur + d < 0) return;
+      queue({ type: "cmd", seat, from, idx }, d);
+    },
+    poison: (el) => {
+      const seat = Number(el.dataset.seat);
+      const d = Number(el.dataset.d);
+      if (liveState().players[seat].poison + d < 0) return;
+      queue({ type: "poison", seat }, d);
+    },
+    tax: (el) => {
+      const seat = Number(el.dataset.seat);
+      const idx = Number(el.dataset.idx);
+      const d = Number(el.dataset.d);
+      if (liveState().players[seat].tax[idx] + d < 0) return;
+      queue({ type: "tax", seat, idx }, d);
+    },
+    counter: (el) => {
+      const seat = Number(el.dataset.seat);
+      const name = el.dataset.name;
+      const d = Number(el.dataset.d);
+      if ((liveState().players[seat].counters[name] || 0) + d < 0) return;
+      queue({ type: "counter", seat, name }, d);
+    },
+    flag: (el) => {
+      const seat = Number(el.dataset.seat);
+      const flag = el.dataset.flag;
+      dispatch({ type: "flag", seat, flag, value: !liveState().players[seat][flag] });
+    },
+    token: (el) => {
+      const seat = Number(el.dataset.seat);
+      const token = el.dataset.token;
+      dispatch({ type: "token", token, seat: liveState()[token] === seat ? null : seat });
+    },
+    tokenModal: (el) => tokenModal(el.dataset.token),
+    tokenSet: (el) => {
+      closeModal();
+      dispatch({ type: "token", token: el.dataset.token, seat: el.dataset.seat === "" ? null : Number(el.dataset.seat) });
+    },
+    elimPrompt: (el) => {
+      flushAll();
+      const seat = Number(el.dataset.seat);
+      const lethal = liveState().players[seat].lethal;
+      ui.elim = { seat, cause: lethal ? lethal.cause : "combat", by: lethal && lethal.by != null && lethal.by !== seat ? lethal.by : guessKiller(seat) };
+      showElim();
+    },
+    elimCause: (el) => {
+      ui.elim.cause = el.dataset.v;
+      if (el.dataset.v === "concede") ui.elim.by = null;
+      showElim();
+    },
+    elimBy: (el) => {
+      ui.elim.by = el.dataset.v === "" ? null : Number(el.dataset.v);
+      showElim();
+    },
+    elimConfirm: () => eliminate(ui.elim.seat, ui.elim.by, ui.elim.cause),
+    concede: (el) => {
+      const seat = Number(el.dataset.seat);
+      confirmModal(t("confirmConcede", { name: game.setup.seats[seat].name }), () => eliminate(seat, null, "concede"), t("concede"));
+    },
+    undo: () => {
+      flushAll();
+      const last = [...game.events].reverse().find((e) => !e.reverted);
+      if (!last) return;
+      last.reverted = true;
+      ui.attrib = null;
+      persist();
+      render();
+      toast(`↶ ${describe(last, game.setup.seats)}`);
+    },
+    nextTurn: () => {
+      flushAll();
+      const st = liveState();
+      dispatch({ type: "turn", to: Game.nextAlive(st, st.active, game.setup.seats.length) });
+    },
+    menu: () => {
+      flushAll();
+      render();
+      openMenu();
+    },
+    showLog: () => {
+      flushAll();
+      showLog();
+    },
+    logToggle: (el) => {
+      const ev = game.events.find((e) => e.id === el.dataset.id);
+      if (!ev) return;
+      ev.reverted = !ev.reverted;
+      persist();
+      render();
+      showLog();
+    },
+    noteModal: () => noteModal(),
+    noteTag: (el) => {
+      const ta = $("#noteText");
+      ta.value = (ta.value ? ta.value.trim() + " " : "") + el.dataset.v;
+      ta.focus();
+    },
+    noteSave: () => {
+      const text = $("#noteText").value.trim();
+      closeModal();
+      if (text) {
+        dispatch({ type: "note", text });
+        toast(`📝 ${t("noteSaved")}`);
+      }
+    },
+    reroll: () => {
+      game.setup.firstSeat = random(game.setup.seats.length);
+      persist();
+      closeModal();
+      render();
+      toast(`🎲 ${t("goesFirst", { name: game.setup.seats[game.setup.firstSeat].name })}`);
+    },
+    endPrompt: () => {
+      ui.end = null;
+      openEnd();
+    },
+    endWinner: (el) => {
+      ui.end.winner = el.dataset.v === "" ? null : Number(el.dataset.v);
+      if (ui.end.winner == null) ui.end.winType = "draw";
+      else if (ui.end.winType === "draw") ui.end.winType = "last";
+      openEnd();
+    },
+    endType: (el) => {
+      ui.end.winType = el.dataset.v;
+      if (el.dataset.v === "draw") ui.end.winner = null;
+      openEnd();
+    },
+    endCancel: () => {
+      ui.end = null;
+      closeModal();
+    },
+    endSave: () => {
+      flushAll();
+      const match = Game.buildMatch(game, { winnerSeat: ui.end.winner, winType: ui.end.winType });
+      S.matches.push(match);
+      Store.save();
+      game = null;
+      Store.saveGame(null);
+      ui.end = null;
+      go("match", { id: match.id });
+      toast(`✅ ${t("matchSaved")}`);
+    },
+    restartGame: () =>
+      confirmModal(
+        t("confirmRestart"),
+        () => {
+          const prev = game.setup;
+          const firstSeat = prev.firstMode === "random" ? random(prev.seats.length) : prev.firstSeat;
+          startFrom({ ...prev, startedAt: Date.now(), firstSeat });
+        },
+        t("newGame")
+      ),
+    discardGame: () =>
+      confirmModal(
+        t("confirmDiscard"),
+        () => {
+          pending.forEach((p) => clearTimeout(p.timer));
+          pending.clear();
+          game = null;
+          Store.saveGame(null);
+          go("home");
+        },
+        t("discardGame")
+      ),
+
+    addPlayer: () => {
+      const used = S.players.map((p) => p.color);
+      const p = {
+        id: Store.uid(),
+        name: I18n.raw("newPlayer") + " " + (S.players.filter((x) => !x.guest).length + 1),
+        color: COLORS.find((c) => !used.includes(c)) || COLORS[random(COLORS.length)],
+        avatar: AVATARS[random(AVATARS.length)],
+        guest: false,
+      };
+      S.players.push(p);
+      Store.save();
+      go("player", { id: p.id });
+    },
+    pColor: (el) => {
+      Store.player(ui.params.id).color = el.dataset.v;
+      Store.save();
+      render();
+    },
+    pAvatar: (el) => {
+      Store.player(ui.params.id).avatar = el.dataset.v;
+      Store.save();
+      render();
+    },
+    deletePlayer: (el) =>
+      confirmModal(
+        t("confirmDeletePlayer"),
+        () => {
+          S.players = S.players.filter((p) => p.id !== el.dataset.id);
+          S.decks = S.decks.filter((d) => d.ownerId !== el.dataset.id);
+          Store.data.players = S.players;
+          Store.data.decks = S.decks;
+          Store.save();
+          go("players");
+        },
+        t("delete")
+      ),
+    promoteGuest: (el) => {
+      Store.player(el.dataset.id).guest = false;
+      Store.save();
+      render();
+    },
+    mergeGuest: (el) => {
+      const guest = Store.player(el.dataset.id);
+      openModal(
+        `<h2>${t("mergeX", { name: guest.name })}</h2><p class="muted small">${t("mergeHint")}</p><div class="chips">${S.players
+          .filter((p) => !p.guest)
+          .map((p) => `<button class="chip" data-action="mergeInto" data-guest="${guest.id}" data-target="${p.id}">${avatar(p)}${esc(p.name)}</button>`)
+          .join("")}</div>`,
+        "small"
+      );
+    },
+    mergeInto: (el) => {
+      Store.mergeGuest(el.dataset.guest, el.dataset.target);
+      closeModal();
+      render();
+      toast(t("merged"));
+    },
+    openDeck: (el) => {
+      const d = el.dataset.id ? Store.deck(el.dataset.id) : null;
+      ui.deck = d
+        ? { ...d, commanders: [...d.commanders], warn: "" }
+        : { id: null, ownerId: el.dataset.owner, name: "", commanders: [], colors: "", list: "", bracket: null, art: null, warn: "" };
+      deckModal();
+    },
+    dColor: (el) => {
+      readDeckForm();
+      const c = el.dataset.v;
+      const d = ui.deck;
+      d.colors = d.colors.includes(c) ? d.colors.replace(c, "") : MANA.filter((m) => d.colors.includes(m) || m === c).join("");
+      deckModal();
+    },
+    deckSave: () => {
+      readDeckForm();
+      const d = ui.deck;
+      if (!d.name && !d.commanders.length) return toast(t("deckNeedsName"));
+      const deck = { id: d.id || Store.uid(), ownerId: d.ownerId, name: d.name || d.commanders.join(" + "), commanders: d.commanders, colors: d.colors, list: d.list, bracket: d.bracket, art: d.art || null };
+      const idx = S.decks.findIndex((x) => x.id === deck.id);
+      if (idx >= 0) S.decks[idx] = deck;
+      else S.decks.push(deck);
+      Store.save();
+      closeModal();
+      render();
+    },
+    deckDelete: () =>
+      confirmModal(
+        t("confirmDeleteDeck"),
+        () => {
+          Store.data.decks = S.decks = S.decks.filter((x) => x.id !== ui.deck.id);
+          Store.save();
+          render();
+        },
+        t("delete")
+      ),
+
+    deleteMatch: (el) =>
+      confirmModal(
+        t("confirmDeleteMatch"),
+        () => {
+          Store.data.matches = S.matches = S.matches.filter((m) => m.id !== el.dataset.id);
+          Store.save();
+          go("history");
+        },
+        t("delete")
+      ),
+
+    newManual: () => {
+      ui.manual = { seats: [], winner: null, date: new Date().toISOString().slice(0, 10), rounds: "" };
+      go("manual");
+    },
+    manToggle: (el) => {
+      const mu = ui.manual;
+      const idx = mu.seats.findIndex((s) => s.playerId === el.dataset.id);
+      if (idx >= 0) {
+        mu.seats.splice(idx, 1);
+        if (mu.winner === idx) mu.winner = null;
+        else if (mu.winner > idx) mu.winner--;
+      } else if (mu.seats.length < Game.MAX_PLAYERS) mu.seats.push({ playerId: el.dataset.id, deckId: defaultDeck(el.dataset.id) });
+      render();
+    },
+    manWinner: (el) => {
+      const i = Number(el.dataset.seat);
+      ui.manual.winner = ui.manual.winner === i ? null : i;
+      render();
+    },
+    manSave: () => {
+      const mu = ui.manual;
+      const date = Date.parse(mu.date + "T12:00:00") || Date.now();
+      const match = {
+        id: Store.uid(),
+        manual: true,
+        date,
+        startedAt: date,
+        endedAt: date,
+        durationMin: null,
+        firstSeat: null,
+        rounds: parseInt(mu.rounds, 10) || null,
+        seats: mu.seats.map((s) => {
+          const p = Store.player(s.playerId);
+          const d = Store.deck(s.deckId);
+          return { playerId: p.id, name: p.name, deckId: d ? d.id : null, deckName: d ? d.name : "", commanders: d ? d.commanders : [] };
+        }),
+        winnerSeat: mu.winner,
+        winType: mu.winner == null ? "draw" : null,
+        eliminations: [],
+        damage: null,
+        finalLife: null,
+        notes: [],
+        events: [],
+      };
+      S.matches.push(match);
+      Store.save();
+      ui.manual = null;
+      go("match", { id: match.id });
+      toast(`✅ ${t("matchSaved")}`);
+    },
+
+    exportData: () => {
+      const payload = { app: "commander-tracker", version: 1, exportedAt: new Date().toISOString(), data: S, game };
+      const blob = new Blob([JSON.stringify(payload, null, 1)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `commander-tracker-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    },
+    eraseAll: () =>
+      confirmModal(
+        t("confirmErase"),
+        () => {
+          const lang = S.settings.lang;
+          Store.replaceAll({ settings: { lang } });
+          game = null;
+          pending.clear();
+          Store.saveGame(null);
+          go("home");
+        },
+        t("eraseAll")
+      ),
+  };
+
+  const C = {
+    seatDeck: (el) => {
+      ui.setup.seats[Number(el.dataset.seat)].deckId = el.value;
+    },
+    quick: (el) => {
+      ui.setup.quick = el.checked;
+      render();
+    },
+    startLife: (el) => {
+      ui.setup.startingLife = clampLife(el.value);
+    },
+    first: (el) => {
+      ui.setup.first = el.value;
+    },
+    pName: (el) => {
+      const name = el.value.trim();
+      if (!name) return;
+      Store.player(ui.params.id).name = name;
+      Store.save();
+      render();
+    },
+    pAvatarCustom: (el) => {
+      const v = el.value.trim();
+      if (!v) return;
+      Store.player(ui.params.id).avatar = v;
+      Store.save();
+      render();
+    },
+    cmdLookup: async () => {
+      readDeckForm();
+      const d = ui.deck;
+      const names = d.commanders.slice();
+      if (!names.length || !navigator.onLine) return;
+      const cards = await Promise.all(names.map(lookupCard));
+      if (ui.deck !== d || !$("#dC1")) return;
+      readDeckForm();
+      const found = cards.filter(Boolean);
+      if (!found.length) return;
+      found.forEach((c, k) => {
+        if (d.commanders[k] && d.commanders[k].toLowerCase() === c.name.toLowerCase()) d.commanders[k] = c.name;
+      });
+      d.colors = MANA.filter((m) => found.some((c) => c.colors.includes(m))).join("");
+      d.art = found[0].art || d.art;
+      const banned = found.filter((c) => c.legal === "banned").map((c) => c.name);
+      const notCmd = found.filter((c) => !c.canLead).map((c) => c.name);
+      d.warn = [banned.length ? t("bannedWarn", { names: banned.join(", ") }) : "", notCmd.length ? t("notCommanderWarn", { names: notCmd.join(", ") }) : ""].filter(Boolean).join(" ");
+      deckModal();
+    },
+    manDeck: (el) => {
+      ui.manual.seats[Number(el.dataset.seat)].deckId = el.value;
+    },
+    manDate: (el) => {
+      ui.manual.date = el.value;
+    },
+    manRounds: (el) => {
+      ui.manual.rounds = el.value;
+    },
+    lang: (el) => {
+      S.settings.lang = el.value;
+      Store.save();
+      render();
+    },
+    defaultLife: (el) => {
+      S.settings.startingLife = clampLife(el.value);
+      Store.save();
+    },
+    setToggle: (el) => {
+      S.settings[el.dataset.key] = el.checked;
+      Store.save();
+      updateWake();
+    },
+    importFile: (el) => {
+      const file = el.files && el.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let obj;
+        try {
+          obj = JSON.parse(reader.result);
+        } catch (e) {
+          return toast(t("importFailed"));
+        }
+        const data = obj && obj.data ? obj.data : obj;
+        if (!data || !Array.isArray(data.players)) return toast(t("importFailed"));
+        confirmModal(
+          t("confirmImport", { players: data.players.length, matches: (data.matches || []).length }),
+          () => {
+            Store.replaceAll(data);
+            render();
+            toast(t("imported"));
+          },
+          t("import")
+        );
+      };
+      reader.readAsText(file);
+      el.value = "";
+    },
+  };
+
+  const F = {
+    addGuest: (form) => {
+      const input = form.querySelector("input");
+      const name = input.value.trim();
+      if (!name) return;
+      let p = S.players.find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (!p) {
+        const taken = ui.setup.seats.map((s) => Store.player(s.playerId).color);
+        const free = COLORS.filter((c) => !taken.includes(c));
+        p = { id: Store.uid(), name, color: free.length ? free[random(free.length)] : COLORS[random(COLORS.length)], avatar: name.slice(0, 1).toUpperCase(), guest: true };
+        S.players.push(p);
+        Store.save();
+      }
+      const su = ui.setup;
+      if (!su.seats.some((s) => s.playerId === p.id) && su.seats.length < Game.MAX_PLAYERS) su.seats.push({ playerId: p.id, deckId: defaultDeck(p.id) });
+      render();
+      const again = $("#guestName");
+      if (again) again.focus();
+    },
+    addCounter: (form) => {
+      const name = form.querySelector("input").value.trim();
+      if (!name) return;
+      queue({ type: "counter", seat: Number(form.dataset.seat), name }, 1);
+    },
+  };
+
+  function defaultDeck(playerId) {
+    for (let k = S.matches.length - 1; k >= 0; k--) {
+      const s = S.matches[k].seats.find((x) => x.playerId === playerId);
+      if (s && s.deckId && Store.deck(s.deckId)) return s.deckId;
+    }
+    const d = Store.decksOf(playerId)[0];
+    return d ? d.id : "";
+  }
+
+  // ---------- Scryfall (online only; the tracker never depends on it) ----------
+
+  let acTimer = null;
+  let acSeq = 0;
+  async function autocomplete(q) {
+    const seq = ++acSeq;
+    try {
+      const r = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(q)}`);
+      const j = await r.json();
+      const dl = $("#cmdList");
+      if (seq === acSeq && dl) dl.innerHTML = (j.data || []).map((name) => `<option value="${esc(name)}">`).join("");
+    } catch (e) {
+      /* offline: typing a name by hand still works */
+    }
+  }
+  async function lookupCard(name) {
+    try {
+      const r = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`);
+      if (!r.ok) return null;
+      const c = await r.json();
+      const imgs = c.image_uris || (c.card_faces && c.card_faces[0] && c.card_faces[0].image_uris) || {};
+      const typeLine = c.type_line || (c.card_faces && c.card_faces[0].type_line) || "";
+      const text = c.oracle_text || (c.card_faces || []).map((f) => f.oracle_text).join("\n");
+      return {
+        name: c.name,
+        colors: c.color_identity || [],
+        art: imgs.art_crop || null,
+        legal: c.legalities && c.legalities.commander,
+        canLead: /Legendary.*Creature|Background/.test(typeLine) || /can be your commander/i.test(text || ""),
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ---------- Keep-awake ----------
+
+  async function updateWake() {
+    const want = ui.view === "game" && S.settings.keepAwake && document.visibilityState === "visible";
+    if (want && !wakeLock && "wakeLock" in navigator) {
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => {
+          wakeLock = null;
+        });
+      } catch (e) {
+        wakeLock = null;
+      }
+    } else if (!want && wakeLock) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+    }
+  }
+
+  // ---------- Wiring ----------
+
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-action]");
+    if (!el || el.disabled) return;
+    const fn = A[el.dataset.action];
+    if (!fn) return;
+    e.preventDefault();
+    fn(el, e);
+  });
+  document.addEventListener("change", (e) => {
+    const el = e.target.closest("[data-change]");
+    if (el && C[el.dataset.change]) C[el.dataset.change](el);
+  });
+  document.addEventListener("submit", (e) => {
+    const form = e.target.closest("[data-submit]");
+    if (!form) return;
+    e.preventDefault();
+    F[form.dataset.submit](form);
+  });
+  document.addEventListener("input", (e) => {
+    if (!e.target.matches("[data-scry]")) return;
+    clearTimeout(acTimer);
+    const q = e.target.value.trim();
+    if (q.length >= 2) acTimer = setTimeout(() => autocomplete(q), 250);
+  });
+
+  // Life taps respond on pointerdown; holding repeats, speeding up after a moment.
+  let hold = null;
+  function stopHold() {
+    if (hold) clearTimeout(hold.timer);
+    hold = null;
+  }
+  function lifeTap(seat, d) {
+    if (liveState().players[seat].out) return;
+    if (ui.attrib && ui.attrib.seat === seat) ui.attrib = null;
+    queue({ type: "life", seat, source: null }, d);
+  }
+  app.addEventListener("pointerdown", (e) => {
+    const zone = e.target.closest("[data-life]");
+    if (!zone) return;
+    e.preventDefault();
+    stopHold();
+    const seat = Number(zone.dataset.seat);
+    const d = Number(zone.dataset.life);
+    lifeTap(seat, d);
+    let reps = 0;
+    hold = {
+      timer: setTimeout(function repeat() {
+        reps++;
+        lifeTap(seat, reps > 10 ? d * 5 : d);
+        if (hold) hold.timer = setTimeout(repeat, reps > 10 ? 250 : 110);
+      }, 450),
+    };
+  });
+  window.addEventListener("pointerup", stopHold);
+  window.addEventListener("pointercancel", stopHold);
+  window.addEventListener("blur", stopHold);
+  app.addEventListener("contextmenu", (e) => {
+    if (ui.view === "game") e.preventDefault();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && game) {
+      flushAll();
+      persist();
+    }
+    updateWake();
+  });
+  window.addEventListener("pagehide", () => {
+    if (game) persist();
+  });
+
+  let wasLandscape = isLandscape();
+  window.addEventListener("resize", () => {
+    if (ui.view === "game" && isLandscape() !== wasLandscape) render();
+    wasLandscape = isLandscape();
+  });
+
+  setInterval(() => {
+    const el = document.getElementById("turnTimer");
+    if (el && game) el.textContent = fmtClock(Date.now() - liveState().turnStartedAt);
+  }, 1000);
+
+  restoreGame();
+  ui.view = game ? "game" : "home";
+  render();
+  updateWake();
+
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();
