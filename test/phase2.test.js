@@ -227,9 +227,12 @@ test("username sync reads every page, then each deck, and reports failures", asy
   global.fetch = async (url) => {
     calls.push(url);
     const ok = (data) => ({ ok: true, status: 200, json: async () => data });
-    if (url.includes("/v2/users/nati/decks")) {
+    if (url.includes("/v2/decks/search?") && new URL(url).searchParams.get("authorUserNames") === "nati") {
       const page = Number(new URL(url).searchParams.get("pageNumber"));
-      return ok({ totalPages: 2, data: page === 1 ? [{ publicId: "a", name: "Alpha" }] : [{ publicId: "b", name: "Beta" }] });
+      return ok({
+        totalPages: 2,
+        data: page === 1 ? [{ publicId: "a", name: "Alpha", createdByUser: { userName: "Nati" } }, { publicId: "z", name: "Someone else's", createdByUser: { userName: "natix" } }] : [{ publicId: "b", name: "Beta" }],
+      });
     }
     if (url.endsWith("/decks/all/a")) return ok({ name: "Alpha", boards: { commanders: { cards: { x: { quantity: 1, card: { name: "Cmd A" } } } }, mainboard: { cards: { y: { quantity: 2, card: { name: "Forest" } } } } } });
     return { ok: false, status: 404, json: async () => ({}) };
@@ -244,7 +247,7 @@ test("username sync reads every page, then each deck, and reports failures", asy
   assert.equal(calls.filter((u) => u.includes("pageNumber")).length, 2);
 
   global.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
-  await assert.rejects(Decks.syncUser("nobody"), /noUser/);
+  await assert.rejects(Decks.syncUser("nobody"), /noDecks/);
   global.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
   await assert.rejects(Decks.syncUser("nati"), /blocked/);
   delete global.fetch;

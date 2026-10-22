@@ -178,19 +178,45 @@
     return { data: null, status };
   }
 
+  // A user's public decks come from Moxfield's deck search filtered by author
+  // (the endpoint current Moxfield tools use); the older per-user list is a
+  // fallback in case search ever changes.
+  function deckListUrls(user, page) {
+    const q = `authorUserNames=${encodeURIComponent(user)}&pageNumber=${page}&pageSize=100&sortType=updated&sortDirection=descending`;
+    return [
+      `https://api2.moxfield.com/v2/decks/search?${q}`,
+      `https://api2.moxfield.com/v2/decks/search-sfw?${q}`,
+      `https://api2.moxfield.com/v2/users/${encodeURIComponent(user)}/decks?pageNumber=${page}&pageSize=100`,
+    ];
+  }
+
   async function syncUser(user, onProgress) {
     const ids = [];
     const names = {};
+    let worked = null; // which list address answered, reused for later pages
     for (let page = 1; page <= 10; page++) {
-      const { data, status } = await moxGet(`https://api2.moxfield.com/v2/users/${encodeURIComponent(user)}/decks?pageNumber=${page}&pageSize=100`);
+      let data = null;
+      let status = 0;
+      for (const url of worked != null ? [deckListUrls(user, page)[worked]] : deckListUrls(user, page)) {
+        const res = await moxGet(url);
+        status = res.status || status;
+        if (res.data && Array.isArray(res.data.data)) {
+          data = res.data;
+          worked = deckListUrls(user, page).indexOf(url);
+          break;
+        }
+      }
       if (!data) {
-        if (page === 1) throw new Error(status === 404 ? "noUser" : status === 403 ? "blocked" : "offline");
+        if (page === 1) throw new Error(status === 403 ? "blocked" : status === 0 ? "offline" : "noDecks");
         break;
       }
-      for (const x of data.data || []) {
-        if (x.publicId && !names[x.publicId]) {
-          ids.push(x.publicId);
-          names[x.publicId] = x.name;
+      for (const x of data.data) {
+        const id = x.publicId || x.id;
+        const author = (x.createdByUser && x.createdByUser.userName) || (x.authors && x.authors[0] && x.authors[0].userName);
+        if (author && author.toLowerCase() !== user.toLowerCase()) continue; // search can be fuzzy
+        if (id && !names[id]) {
+          ids.push(id);
+          names[id] = x.name;
         }
       }
       if (!data.totalPages || page >= data.totalPages) break;
