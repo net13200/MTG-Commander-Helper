@@ -15,7 +15,7 @@ Opening `index.html` directly also works, but offline install needs it served ov
 ## What's in the MVP
 
 - **Tracker for 2–6 players**: tiles face each seat (portrait and landscape layouts), or all face the person holding the device ("face me", with the turn bar at the bottom). Every control does what it shows on a plain tap: the left half of a tile is −1, the right half +1, and the −10 −5 / +5 +10 buttons jump by that much; tap the life total to type or set it, or drag it up or down to count. Changes batch into one log entry after 1.5 s. During games the screen is locked to landscape (or portrait, or off, in Settings), so turning or flipping the phone on the table doesn't spin the board; "Turn 180°" in the game menu flips it on purpose.
-- **Commander damage** per source commander (Partner/Background get two), entered once and applied to life too; your own commander counts. Each commander gets its own badge on the tile. If someone else controls a commander, "Dealt by" credits the damage and the knockout to them while 21 still counts per commander. 21 from one commander, 10 poison or 0 life flags the player and offers to eliminate them, unless they have "can't lose".
+- **Commander damage** per source commander (Partner/Background get two), entered once and applied to life too; your own commander counts. Each commander gets its own badge on the tile. If someone else controls a commander, "Dealt by" credits the damage and the knockout to them while 21 still counts per commander. 21 from one commander, 10 poison or 0 life flags the player and offers to eliminate them, unless they have "can't lose". Each tile has a row of the opponents' commander icons: tap one for +1 commander damage from it (corrections in the ⋯ panel or with undo).
 - **Poison, Monarch, the Initiative, commander tax** (+2 per cast), custom counters (energy, experience, rad, anything; a custom counter added for one player is offered to everyone and remembered for later games), "can't lose" / "can't win".
 - **Turns**: random or chosen first player, active-player marker, round counter, optional turn timer, dim-between-turns.
 - **Attribution**: as soon as life drops, a "from whom?" strip appears on that tile; one tap, never blocking. "Paid" marks life paid as a cost, which doesn't count as damage. In 1v1 the opponent is preselected.
@@ -46,6 +46,10 @@ Moxfield has no official public API and doesn't let other sites read its decks, 
 - **One-tap bookmark and profile sync**: in **Settings → One-tap Moxfield import**, add the "Send to Commander Tracker" bookmark (drag it to the bookmarks bar, or copy its code into a bookmark on a phone). Tapped on a Moxfield deck page it sends that deck; tapped on a profile page (`moxfield.com/users/<name>`) it sends all of that user's public decks, and the app lists them to tick and sync, remembering the picks for next time ("Sync from Moxfield" on a player's page walks through it). The bookmark reads the decks on Moxfield's own page and hands them to the app in a new tab with `postMessage`, so nothing goes through a server. On iPhone/iPad it opens in Safari, which keeps its data apart from the Home Screen app, so use the clipboard there.
 
 Everything is saved on the device: decks, games and the Scryfall card data used by deck checks (so checks work offline). Each deck can also be saved as a `.txt` decklist.
+
+## Sharing players between phones
+
+Players & decks → **Share players & decks** packs the chosen players, their decks and (optionally) the games they played into a link or a file to send on WhatsApp. Opening it on another phone adds them; people with the same name are merged, changed decks get a new version, and games are added once. No server is involved: the link carries the data itself (gzip-compressed, in the URL fragment).
 
 ## Usage log
 

@@ -491,3 +491,14 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 table.usage td:last-child { text-align: end; font-variant-numeric: tabular-nums; }
 
 body.turned { overflow: hidden; }
+
+/* ---------- Commander damage row on tiles ---------- */
+
+.cmd-strip { position: relative; z-index: 2; display: flex; gap: 6px; justify-content: center; padding: 0 6px 4px; overflow-x: auto; scrollbar-width: none; font-size: clamp(11px, 5.5cqmin, 16px); }
+.cmd-strip::-webkit-scrollbar { display: none; }
+.cmdhit { flex: none; display: inline-flex; align-items: center; gap: 0.3em; padding: 2px 0.6em 2px 2px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.22); background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 1em; }
+.cmdhit .cmd-icon, .cmdhit .avatar { width: 1.9em; height: 1.9em; font-size: 0.9em; }
+.cmdhit b { min-width: 1ch; font-weight: 800; }
+.cmdhit:not(.has) b { opacity: 0.55; }
+.cmdhit.hot { background: rgba(229, 72, 77, 0.8); }
+.cmdhit:active { background: rgba(255, 255, 255, 0.2); }

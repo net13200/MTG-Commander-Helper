@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { Store, Game, Stats, I18n, Decks, Recap, Sound, Usage } = window.CT;
+  const { Store, Game, Stats, I18n, Decks, Recap, Sound, Usage, Share } = window.CT;
   const S = Store.data;
   const t = I18n.t;
   const $ = (sel) => document.querySelector(sel);
@@ -424,9 +424,10 @@
     if (st.monarch === i) badges.push(`<span class="badge" title="${t("monarch")}">👑</span>`);
     if (st.initiative === i) badges.push(`<span class="badge" title="${t("initiative")}">🏰</span>`);
     if (p.poison) badges.push(`<span class="badge poison">☠ ${p.poison}</span>`);
-    // One badge per commander that has hit this player, biggest first.
+    // Damage from your own commander (rare) stays a badge; opponents'
+    // commanders get their own tappable row below.
     Object.entries(p.cmd)
-      .filter(([, v]) => v > 0)
+      .filter(([key, v]) => v > 0 && Number(key.split(":")[0]) === i)
       .sort((a, b) => b[1] - a[1])
       .forEach(([key, v]) => {
         const [j, idx] = key.split(":").map(Number);
@@ -462,6 +463,7 @@
           <div class="life">${p.life}${pend ? `<span class="pending">${fmtDelta(pend)}</span>` : ""}</div>
           <button class="zone center" data-center data-seat="${i}" aria-label="${t("editLife")}"></button>
         </div>
+        ${p.out ? "" : cmdStrip(i, p)}
         ${badges.length ? `<div class="tile-foot">${badges.join("")}</div>` : ""}
         <div class="tile-head">${avatar(seat)}<span class="who">${esc(seat.name)}</span>${deck}<button class="more" data-action="panel" data-seat="${i}" aria-label="${t("more")}">⋯</button></div>
         ${lethal}${out}
@@ -469,6 +471,17 @@
         ${ui.panel === i ? panelHtml(i, st) : ""}
       </div>
     </div>`;
+  }
+
+  // One button per opposing commander: tap for +1 commander damage from it.
+  function cmdStrip(i, p) {
+    const hits = game.setup.seats.flatMap((s, j) => (j === i ? [] : cmdNames(s).map((name, idx) => ({ s, j, idx, name, v: p.cmd[j + ":" + idx] || 0 }))));
+    return `<div class="cmd-strip">${hits
+      .map(
+        (h) =>
+          `<button class="cmdhit ${h.v ? "has" : ""} ${h.v >= Game.LETHAL_CMD ? "hot" : ""}" data-action="cmdHit" data-seat="${i}" data-from="${h.j}" data-idx="${h.idx}" title="${esc(h.s.name)}: ${esc(h.name)}" aria-label="+1 ${esc(h.name)}">${cmdIcon(h.s, h.idx)}<b>${h.v || "+"}</b></button>`
+      )
+      .join("")}</div>`;
   }
 
   function attribStrip(i, st) {
@@ -565,6 +578,9 @@
     <div class="page">
       <section>${regulars.map(item).join("") || `<p class="muted">${t("noPlayersYet")}</p>`}
         <button class="btn primary" data-action="addPlayer">+ ${t("addPlayer")}</button></section>
+      <section><h2>📤 ${t("sharePlayers")}</h2><p class="muted small">${t("shareHint")}</p>
+        <div class="actions"><button class="btn" data-action="shareOpen" ${regulars.length ? "" : "disabled"}>📤 ${t("sharePlayers")}</button>
+        <label class="btn">📥 ${t("openSharedFile")}<input type="file" accept="application/json,.json" data-change="shareFile" hidden></label></div></section>
       ${guests.length ? `<section><h2>${t("guests")}</h2><p class="muted small">${t("guestHint")}</p>${guests
         .map(
           (g) =>
@@ -720,15 +736,29 @@
     history.replaceState(null, "", location.pathname + location.search);
     if (ui.view === "game") ui.view = "home";
     render();
-    openModal(`<h2>📥 ${t("waitingTitle")}</h2><p class="muted small">${t("waitingHint")}</p><div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button></div>`, "small");
+    openModal(`<h2>📥 ${t("waitingTitle")}</h2><p class="muted small">${t("waitingHint")}</p><p id="waitProgress" class="okmsg" hidden></p><div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button></div>`, "small");
+    armReceiveTimer();
+  }
+
+  function armReceiveTimer() {
     clearTimeout(receiveTimer);
     receiveTimer = setTimeout(() => {
       if (!ui.sync && !ui.incoming) openModal(`<p class="confirm-text">${t("nothingArrived")}</p><div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`, "small");
-    }, 45000);
+    }, 60000);
   }
 
   window.addEventListener("message", (e) => {
-    if (!/^https:\/\/(www\.)?moxfield\.com$/.test(e.origin) || !e.data || e.data.type !== "ct-decks") return;
+    if (!/^https:\/\/(www\.)?moxfield\.com$/.test(e.origin) || !e.data) return;
+    if (e.data.type === "ct-progress") {
+      const box = $("#waitProgress");
+      if (box) {
+        box.hidden = false;
+        box.textContent = I18n.fmt("readingN", { k: Number(e.data.k) || 0, n: Number(e.data.n) || 0 });
+      }
+      armReceiveTimer(); // still working: keep waiting
+      return;
+    }
+    if (e.data.type !== "ct-decks") return;
     try {
       e.source.postMessage({ type: "ct-ack" }, e.origin);
     } catch (err) {
@@ -750,6 +780,7 @@
     ui.sync = {
       user: got.user,
       decks: got.decks,
+      failed: got.failed || [],
       ownerId: owner ? owner.id : "",
       // Preselect the decks picked last time, or all of them on a first sync.
       selected: new Set(got.decks.map((d, k) => k).filter((k) => !remembered || (got.decks[k].source && remembered.includes(got.decks[k].source.id)))),
@@ -779,6 +810,7 @@
         .join("")}<button class="chip" data-action="syncOwner" data-id="">+ ${t("addPlayer")}</button></div>
       <div class="actions"><button class="btn small" data-action="syncAll" data-v="1">${t("selectAll")}</button><button class="btn small" data-action="syncAll" data-v="">${t("selectNone")}</button></div>
       <div class="sync-list">${rows}</div>
+      ${sy.failed && sy.failed.length ? `<p class="warn">${t("syncFailed", { n: sy.failed.length, names: sy.failed.join(", ") })}</p>` : ""}
       <div class="actions"><button class="btn" data-action="syncCancel">${t("cancel")}</button><button class="btn primary" data-action="syncGo" ${sy.selected.size && sy.ownerId ? "" : "disabled"}>${t("syncN", { n: sy.selected.size })}</button></div>`
     );
   }
@@ -831,7 +863,49 @@
     );
   }
 
+  function shareModal() {
+    const sh = ui.share;
+    openModal(
+      `<h2>📤 ${t("sharePlayers")}</h2>
+      <h3>${t("shareWhich")}</h3>
+      <div class="sync-list">${S.players
+        .filter((p) => !p.guest)
+        .map((p) => `<label class="row"><input type="checkbox" data-change="sharePick" data-id="${p.id}" ${sh.ids.has(p.id) ? "checked" : ""}>${avatar(p)}<span class="grow">${esc(p.name)}<small class="muted">${t("nDecks", { n: Store.decksOf(p.id).length })}</small></span></label>`)
+        .join("")}</div>
+      <label class="row"><input type="checkbox" data-change="shareHist" ${sh.history ? "checked" : ""}><span class="grow">${t("shareHistory")}</span></label>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn" data-action="shareFileOut" ${sh.ids.size ? "" : "disabled"}>📄 ${t("shareFile")}</button><button class="btn primary" data-action="shareLink" ${sh.ids.size ? "" : "disabled"}>🔗 ${t("shareLink")}</button></div>`,
+      "small"
+    );
+  }
+
+  function sharePayload() {
+    return Share.pack(S, [...ui.share.ids], ui.share.history);
+  }
+
+  function offerShare(share) {
+    if (!Share.valid(share)) return toast(t("importFailed"));
+    ui.shareIn = share;
+    if (ui.view === "game") ui.view = "home";
+    render();
+    openModal(
+      `<h2>📥 ${t("sharedTitle")}</h2>
+      <div class="chips">${share.players.map((p) => `<span class="chip">${avatar(p)}${esc(p.name)}</span>`).join("")}</div>
+      <p class="small">${t("sharedSummary", { decks: share.decks.length, games: (share.matches || []).length })}</p>
+      <p class="muted small">${t("sharedMergeHint")}</p>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="shareImport">${t("importShared")}</button></div>`,
+      "small"
+    );
+  }
+
   function takeFragment() {
+    if (location.hash.startsWith("#share=")) {
+      const code = location.hash.slice(7);
+      history.replaceState(null, "", location.pathname + location.search);
+      Share.decode(code)
+        .then(offerShare)
+        .catch(() => toast(t("importFailed")));
+      return;
+    }
     if (location.hash === "#receive") return awaitDecks();
     const incoming = Decks.fromFragment(location.hash);
     if (!location.hash.startsWith("#import=")) return;
@@ -903,12 +977,62 @@
 
   // Commander icon: the owner's chosen emoji, else the card's art, else the
   // player's avatar. Works for a deck or a game seat (same fields).
+  function cachedArt(name) {
+    const c = name && Store.cardCache[Decks.cardKey(name)];
+    return c ? c.art : null;
+  }
+
   function cmdIcon(holder, idx, fallback) {
     const emoji = holder.cmdIcons && holder.cmdIcons[idx];
     if (emoji) return `<span class="cmd-icon emoji">${esc(emoji)}</span>`;
-    const art = (holder.cmdArt && holder.cmdArt[idx]) || (idx === 0 ? holder.art : null);
+    const art = (holder.cmdArt && holder.cmdArt[idx]) || cachedArt((holder.commanders || [])[idx]) || (idx === 0 ? holder.art : null);
     if (art && S.settings.showArt) return `<span class="cmd-icon" style="background-image:url('${esc(art)}')"></span>`;
     return fallback || avatar(holder);
+  }
+
+  // Fills in missing commander art (decks imported before art was kept, or
+  // partners) from saved card data, else from Scryfall. Returns true if any
+  // holder (deck or game seat) changed.
+  async function ensureArt(holders) {
+    const fill = () => {
+      let changed = false;
+      const missing = [];
+      for (const h of holders) {
+        (h.commanders || []).forEach((name, k) => {
+          if (h.cmdArt && h.cmdArt[k]) return;
+          const art = cachedArt(name);
+          if (art) {
+            h.cmdArt = (h.cmdArt || []).slice();
+            h.cmdArt[k] = art;
+            changed = true;
+          } else missing.push(name);
+        });
+      }
+      return { changed, missing };
+    };
+    let { changed, missing } = fill();
+    if (missing.length && navigator.onLine) {
+      try {
+        const { fetched } = await Decks.fetchCards(missing, Store.cardCache);
+        if (fetched) Store.saveCards();
+        changed = fill().changed || changed;
+      } catch (e) {
+        /* offline or Scryfall down: avatars stay for now */
+      }
+    }
+    return changed;
+  }
+
+  function refreshArt() {
+    ensureArt(S.decks).then((changed) => {
+      if (changed) Store.save();
+      if (game) {
+        ensureArt(game.setup.seats).then((seatsChanged) => {
+          if (seatsChanged) persist();
+          if ((changed || seatsChanged) && !$(".modal")) render();
+        });
+      } else if (changed && !$(".modal")) render();
+    });
   }
 
   function fixNames(d, map) {
@@ -1401,6 +1525,7 @@
     newGame(setupLike);
     const first = game.setup.seats[game.setup.firstSeat];
     go("game");
+    refreshArt();
     toast(`🎲 ${t("goesFirst", { name: first.name })}`);
   }
 
@@ -1520,6 +1645,60 @@
       if (d > 0 && S.settings.sound) Sound.play();
       const by = ui.cmdBy[seat];
       queue(by == null ? { type: "cmd", seat, from, idx } : { type: "cmd", seat, from, idx, by }, d);
+    },
+    shareOpen: () => {
+      ui.share = { ids: new Set(S.players.filter((p) => !p.guest).map((p) => p.id)), history: true };
+      shareModal();
+    },
+    shareLink: async () => {
+      const url = appUrl() + "#share=" + (await Share.encode(sharePayload()));
+      if (url.length > 60000) {
+        toast(t("shareTooLong"));
+        return A.shareFileOut();
+      }
+      Usage.track("share:link");
+      try {
+        if (navigator.share) await navigator.share({ title: I18n.raw("appName"), text: I18n.raw("shareText"), url });
+        else {
+          await navigator.clipboard.writeText(url);
+          toast(t("copied"));
+        }
+        closeModal();
+      } catch (e) {
+        /* share sheet closed */
+      }
+    },
+    shareFileOut: async () => {
+      const name = `commander-tracker-players-${new Date().toISOString().slice(0, 10)}.json`;
+      const text = JSON.stringify(sharePayload());
+      Usage.track("share:file");
+      try {
+        const file = new File([text], name, { type: "application/json" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: I18n.raw("appName"), text: I18n.raw("shareText") });
+          return closeModal();
+        }
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+      download(name, text, "application/json");
+      closeModal();
+    },
+    shareImport: () => {
+      const res = Share.merge(S, ui.shareIn, Store.uid);
+      ui.shareIn = null;
+      Store.save();
+      Usage.track("share:import");
+      go("players");
+      toast(t("sharedDone", { p: res.playersAdded + res.playersMatched, d: res.decksAdded + res.decksUpdated, g: res.matchesAdded }));
+      if (res.touchedDecks.length) checkQueue(res.touchedDecks);
+      refreshArt();
+    },
+    cmdHit: (el) => {
+      const seat = Number(el.dataset.seat);
+      if (liveState().players[seat].out) return;
+      if (S.settings.sound) Sound.play();
+      queue({ type: "cmd", seat, from: Number(el.dataset.from), idx: Number(el.dataset.idx) }, 1);
     },
     cmdBy: (el) => {
       ui.cmdBy[Number(el.dataset.seat)] = el.dataset.v === "" ? null : Number(el.dataset.v);
@@ -2218,6 +2397,28 @@
       Store.save();
       render();
     },
+    sharePick: (el) => {
+      if (el.checked) ui.share.ids.add(el.dataset.id);
+      else ui.share.ids.delete(el.dataset.id);
+      shareModal();
+    },
+    shareHist: (el) => {
+      ui.share.history = el.checked;
+    },
+    shareFile: (el) => {
+      const file = el.files && el.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          offerShare(JSON.parse(reader.result));
+        } catch (e) {
+          toast(t("importFailed"));
+        }
+      };
+      reader.readAsText(file);
+      el.value = "";
+    },
     syncPick: (el) => {
       const k = Number(el.dataset.k);
       if (el.checked) ui.sync.selected.add(k);
@@ -2540,6 +2741,7 @@
   updateWake();
   takeFragment();
   window.addEventListener("hashchange", takeFragment);
+  refreshArt();
 
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
