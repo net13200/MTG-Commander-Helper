@@ -1,0 +1,17 @@
+{
+  "name": "commander-tracker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Commander life tracker for our playgroup (web app + Android wrapper)",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build:web": "node scripts/build-web.js",
+    "android:sync": "npm run build:web && npx cap sync android"
+  },
+  "devDependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/cli": "8.5.3",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/share": "8.0.2"
+  }
+}

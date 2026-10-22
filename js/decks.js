@@ -158,6 +158,60 @@
     return "javascript:" + encodeURIComponent(code).replace(/%2F/g, "/").replace(/%3A/g, ":");
   }
 
+  // ---------- Username sync (Android app only) ----------
+  // In the installed app, requests go out natively from the phone, so
+  // Moxfield can be read directly: no CORS, and from a home or mobile
+  // connection that its bot protection lets through. One deck a second.
+  async function moxGet(url) {
+    let status = 0;
+    for (let k = 0; k < 4; k++) {
+      try {
+        const r = await fetch(url, { headers: { Accept: "application/json" } });
+        if (r.ok) return { data: await r.json(), status: r.status };
+        status = r.status;
+        if (status === 404 || status === 403) break;
+      } catch (e) {
+        status = 0;
+      }
+      await wait(status === 429 ? 5000 * (k + 1) : 1500);
+    }
+    return { data: null, status };
+  }
+
+  async function syncUser(user, onProgress) {
+    const ids = [];
+    const names = {};
+    for (let page = 1; page <= 10; page++) {
+      const { data, status } = await moxGet(`https://api2.moxfield.com/v2/users/${encodeURIComponent(user)}/decks?pageNumber=${page}&pageSize=100`);
+      if (!data) {
+        if (page === 1) throw new Error(status === 404 ? "noUser" : status === 403 ? "blocked" : "offline");
+        break;
+      }
+      for (const x of data.data || []) {
+        if (x.publicId && !names[x.publicId]) {
+          ids.push(x.publicId);
+          names[x.publicId] = x.name;
+        }
+      }
+      if (!data.totalPages || page >= data.totalPages) break;
+      await wait(1100);
+    }
+    if (!ids.length) throw new Error("noDecks");
+    const decks = [];
+    const failed = [];
+    for (let i = 0; i < ids.length && i < 150; i++) {
+      if (onProgress) onProgress(i + 1, ids.length);
+      const { data } = await moxGet("https://api2.moxfield.com/v3/decks/all/" + ids[i]);
+      if (data) {
+        const b = data.boards || {};
+        const g = (n) => Object.values((b[n] && b[n].cards) || data[n] || {}).map((e) => [e.quantity || 1, (e.card && e.card.name) || e.name]);
+        decks.push({ id: ids[i], n: data.name || names[ids[i]] || "", c: g("commanders"), m: g("mainboard") });
+      } else failed.push(names[ids[i]] || ids[i]);
+      if (i < ids.length - 1) await wait(1100);
+    }
+    return fromSync({ v: 2, user, decks, failed });
+  }
+
   function deckFromPayload(p) {
     if (!p || typeof p !== "object") return null;
     const toCards = (list) => (Array.isArray(list) ? list : []).filter((e) => Array.isArray(e) && e[1]).map(([q, n]) => ({ q: Number(q) || 1, n: String(n).slice(0, 200) }));
@@ -407,6 +461,6 @@
     return ["W", "U", "B", "R", "G"].filter((x) => all.has(x)).join("");
   }
 
-  CT.Decks = { parseList, normalizeName, cardKey, fromSync, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
+  CT.Decks = { parseList, normalizeName, cardKey, fromSync, syncUser, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
   if (typeof module !== "undefined") module.exports = CT.Decks;
 })(typeof window !== "undefined" ? window : globalThis);

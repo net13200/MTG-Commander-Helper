@@ -221,3 +221,31 @@ test("profile sync payload is validated", () => {
   assert.equal(Decks.fromSync({ decks: [] }), null);
   assert.equal(Decks.fromSync("nope"), null);
 });
+
+test("username sync reads every page, then each deck, and reports failures", async () => {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url.includes("/v2/users/nati/decks")) {
+      const page = Number(new URL(url).searchParams.get("pageNumber"));
+      return ok({ totalPages: 2, data: page === 1 ? [{ publicId: "a", name: "Alpha" }] : [{ publicId: "b", name: "Beta" }] });
+    }
+    if (url.endsWith("/decks/all/a")) return ok({ name: "Alpha", boards: { commanders: { cards: { x: { quantity: 1, card: { name: "Cmd A" } } } }, mainboard: { cards: { y: { quantity: 2, card: { name: "Forest" } } } } } });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const progress = [];
+  const got = await Decks.syncUser("nati", (k, n) => progress.push(`${k}/${n}`));
+  assert.equal(got.user, "nati");
+  assert.deepEqual(got.decks.map((d) => d.name), ["Alpha"]);
+  assert.deepEqual(got.decks[0].commanders, ["Cmd A"]);
+  assert.deepEqual(got.failed, ["Beta"]);
+  assert.deepEqual(progress, ["1/2", "2/2"]);
+  assert.equal(calls.filter((u) => u.includes("pageNumber")).length, 2);
+
+  global.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  await assert.rejects(Decks.syncUser("nobody"), /noUser/);
+  global.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
+  await assert.rejects(Decks.syncUser("nati"), /blocked/);
+  delete global.fetch;
+});

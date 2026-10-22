@@ -1,0 +1,11 @@
+{
+  "appId": "io.github.net13200.commandertracker",
+  "appName": "Commander Tracker",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  },
+  "android": {
+    "backgroundColor": "#0d0d12"
+  }
+}

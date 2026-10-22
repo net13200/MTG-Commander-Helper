@@ -1,0 +1,59 @@
+name: Android app
+
+on:
+  push:
+    branches: [main, claude/laughing-goodall-bqs59d]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: npm test
+      - name: Copy the web app into the Android project
+        run: npm run android:sync
+      - name: Build APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk commander-tracker.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: commander-tracker-apk
+          path: commander-tracker.apk
+      # A fixed release, so the download link never changes:
+      # https://github.com/<repo>/releases/latest/download/commander-tracker.apk
+      - name: Publish to the "android" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Android build ${{ github.run_number }} from ${GITHUB_SHA::7}. Install commander-tracker.apk on the phone; updates install over the previous version."
+          if gh release view android >/dev/null 2>&1; then
+            gh release upload android commander-tracker.apk --clobber
+            gh release edit android --notes "$notes" --latest
+          else
+            gh release create android commander-tracker.apk --title "Commander Tracker for Android" --notes "$notes" --target "$GITHUB_SHA" --latest
+          fi

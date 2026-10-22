@@ -625,6 +625,7 @@
         <button class="btn primary" data-action="addPlayer">+ ${t("addPlayer")}</button></section>
       <section><h2>📤 ${t("sharePlayers")}</h2><p class="muted small">${t("shareHint")}</p>
         <div class="actions"><button class="btn" data-action="shareOpen" ${regulars.length ? "" : "disabled"}>📤 ${t("sharePlayers")}</button>
+        <button class="btn" data-action="pasteShare">📋 ${t("pasteShareLink")}</button>
         <label class="btn">📥 ${t("openSharedFile")}<input type="file" accept="application/json,.json" data-change="shareFile" hidden></label></div></section>
       ${guests.length ? `<section><h2>${t("guests")}</h2><p class="muted small">${t("guestHint")}</p>${guests
         .map(
@@ -650,7 +651,7 @@
           <input class="emoji-in" value="${AVATARS.includes(p.avatar) ? "" : esc(p.avatar)}" maxlength="4" placeholder="Aa" data-change="pAvatarCustom" aria-label="${t("avatar")}"></div>
       </section>
       <section><h2>${t("decks")}</h2>
-        <div class="inline"><input value="${esc(p.moxfieldUser || "")}" placeholder="${t("moxUser")}" data-change="pMox" autocomplete="off" autocapitalize="off"><button class="btn" data-action="moxHelp" data-id="${p.id}">🔄 ${t("syncFromMox")}</button></div>
+        <div class="inline"><input value="${esc(p.moxfieldUser || "")}" placeholder="${t("moxUser")}" data-change="pMox" autocomplete="off" autocapitalize="off"><button class="btn" data-action="${NATIVE ? "moxSync" : "moxHelp"}" data-id="${p.id}">🔄 ${t("syncFromMox")}</button></div>
         ${decks
           .map(
             (d) =>
@@ -760,6 +761,15 @@
   // Step-by-step guide to getting Moxfield decks in, for this kind of device.
   function helpModal() {
     const { device, playerId } = ui.help;
+    if (NATIVE) {
+      openModal(
+        `<h2>📥 ${t("help_title")}</h2>
+        <section class="help-way"><h3>🔄 ${t("nativeHelpTitle")}</h3><ol class="howto"><li>${t("nativeHelp1")}</li><li>${t("nativeHelp2")}</li><li>${t("help_u4")}</li></ol></section>
+        <section class="help-way"><h3>🛟 ${t("help_trouble")}</h3><ul class="howto"><li>${t("help_t1")}</li><li>${t("help_t2")}</li><li>${t("nativeHelpPaste")}</li></ul></section>
+        <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`
+      );
+      return;
+    }
     const p = playerId && Store.player(playerId);
     const user = (p && p.moxfieldUser) || "";
     const bm = Decks.bookmarklet(appUrl());
@@ -786,6 +796,7 @@
         .map((d) => `<button class="chip ${device === d ? "on" : ""}" data-action="helpDevice" data-v="${d}">${t("dev_" + d)}</button>`)
         .join("")}</div>
       ${iosHome ? `<p class="warn">${t("help_t3")}</p>` : ""}
+      ${device === "android" ? `<p class="okmsg">📱 ${t("getAppPitch")} <a class="btn small primary" href="${APK_URL}">${t("getApp")}</a></p>` : ""}
       ${way1}${way2}
       <section class="help-way"><h3>🛟 ${t("help_trouble")}</h3><ul class="howto">${li([t("help_t1"), t("help_t2"), ...(device === "ios" && !iosHome ? [t("help_t3")] : [])])}</ul></section>
       <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`
@@ -816,8 +827,21 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // In the Android app the page lives at https://localhost; links meant for
+  // other people (share links, the bookmark) must point to the web app.
+  const WEB_URL = "https://net13200.github.io/MTG-Commander-Helper/";
+  const APK_URL = "https://github.com/net13200/MTG-Commander-Helper/releases/latest/download/commander-tracker.apk";
+  const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
   function appUrl() {
-    return location.origin + location.pathname;
+    return NATIVE ? WEB_URL : location.origin + location.pathname;
+  }
+
+  async function shareSheet(data) {
+    const plugin = NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
+    if (plugin) return plugin.share({ title: data.title, text: data.text, url: data.url, dialogTitle: data.title });
+    if (navigator.share) return navigator.share(data);
+    throw new Error("noShare");
   }
 
   // A deck handed over by the bookmarklet (#import=...) waits here until
@@ -1387,6 +1411,9 @@
         <p class="muted small">${t("lockScreenHint")}</p>
         <p class="muted small">${t("controlsHint")}</p>
       </section>
+      ${NATIVE ? "" : `<section><h2>📱 ${t("androidApp")}</h2><p class="small">${t("getAppPitch")}</p><ol class="small howto"><li>${t("getAppStep1")}</li><li>${t("getAppStep2")}</li><li>${t("getAppStep3")}</li></ol>
+        <div class="actions"><a class="btn primary" href="${APK_URL}">⬇ ${t("getApp")}</a></div></section>`}
+      ${NATIVE ? "" : `
       <section><h2>⭐ ${t("oneTapTitle")}</h2>
         <p class="small">${t("oneTapIntro")}</p>
         <p class="small"><button class="linkish" data-action="moxHelp">❓ ${t("help_link")}</button></p>
@@ -1395,6 +1422,7 @@
         <ol class="small howto"><li>${t("oneTapDesktop")}</li><li>${t("oneTapMobile")}</li><li>${t("oneTapUse")}</li></ol>
         <p class="muted small">${t("oneTapIos")}</p>
       </section>
+      `}
       <section><h2>📈 ${t("usageTitle")}</h2><p class="muted small">${t("usageHint", { date: fmtDate(Usage.since()), days: Usage.days() })}</p>
         ${Usage.summary().length ? `<details><summary>${t("usageTop")}</summary><table class="usage">${Usage.summary()
           .slice(0, 25)
@@ -1753,7 +1781,7 @@
       }
       Usage.track("share:link");
       try {
-        if (navigator.share) await navigator.share({ title: I18n.raw("appName"), text: I18n.raw("shareText"), url });
+        if (NATIVE || navigator.share) await shareSheet({ title: I18n.raw("appName"), text: I18n.raw("shareText"), url });
         else {
           await navigator.clipboard.writeText(url);
           toast(t("copied"));
@@ -2214,6 +2242,38 @@
       toast(touched.length ? t("syncedN", { n: touched.length }) : t("syncNothing"));
       if (touched.length) checkQueue(touched);
     },
+    moxSync: async (el) => {
+      const p = Store.player(el.dataset.id);
+      const input = $('[data-change="pMox"]');
+      if (input && input.value.trim()) C.pMox(input);
+      const user = p && p.moxfieldUser;
+      if (!user) return toast(t("enterMoxUser"));
+      Usage.track("moxfield:native-sync");
+      openModal(`<h2>📥 ${t("waitingTitle")}</h2><p id="waitProgress" class="okmsg">${t("readingList", { user })}</p><p class="muted small">${t("nativeSyncHint")}</p>`, "small");
+      try {
+        const got = await Decks.syncUser(user, (k, n) => {
+          const box = $("#waitProgress");
+          if (box) box.textContent = I18n.fmt("readingN", { k, n });
+        });
+        if (!got) throw new Error("noDecks");
+        openSync(got);
+      } catch (e) {
+        openModal(`<p class="confirm-text">${t("msync_" + (["noUser", "noDecks", "blocked"].includes(e.message) ? e.message : "offline"), { user })}</p><div class="actions"><button class="btn" data-action="moxHelp">❓ ${t("help_link")}</button><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`, "small");
+      }
+    },
+    pasteShare: async () => {
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (e) {
+        text = "";
+      }
+      const m = text.match(/#share=([\w-]+)/);
+      if (!m) return toast(t("noShareLink"));
+      Share.decode(m[1])
+        .then(offerShare)
+        .catch(() => toast(t("importFailed")));
+    },
     moxHelp: (el) => {
       ui.help = { device: detectDevice(), playerId: (el && el.dataset.id) || (ui.view === "player" ? ui.params.id : null) };
       Usage.track("help:moxfield:" + ui.help.device);
@@ -2538,10 +2598,13 @@
       else ui.sync.selected.delete(k);
       syncModal();
     },
+    // Saved without re-rendering: a re-render here would eat the tap on the
+    // Sync button right next to the field.
     pMox: (el) => {
-      Store.player(ui.params.id).moxfieldUser = el.value.trim().replace(/^.*moxfield\.com\/users\//i, "").replace(/[\/?#].*$/, "");
+      const user = el.value.trim().replace(/^.*moxfield\.com\/users\//i, "").replace(/[\/?#].*$/, "");
+      Store.player(ui.params.id).moxfieldUser = user;
+      el.value = user;
       Store.save();
-      render();
     },
     pAvatarCustom: (el) => {
       const v = el.value.trim();
@@ -2877,7 +2940,7 @@
   window.addEventListener("hashchange", takeFragment);
   refreshArt();
 
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  if (!NATIVE && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 })();
