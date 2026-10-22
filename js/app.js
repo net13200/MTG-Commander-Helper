@@ -67,8 +67,70 @@
   function podNames(setup) {
     return setup.seats.map((s) => s.name).join(" · ");
   }
+  // ---------- Screen lock during games ----------
+  // Phones on a table flip their screen whenever they're turned. During a
+  // game the app holds one orientation (landscape by default): with the
+  // system lock where it's allowed (installed app on Android), otherwise by
+  // turning the page itself against the device's rotation.
+  let lockBase = null; // device angle the game is pinned to
+  let lockTurn = 0; // extra clockwise turn applied to the page (0/90/180/270)
+
+  function deviceAngle() {
+    const so = screen.orientation;
+    const a = so && typeof so.angle === "number" ? so.angle : Number(window.orientation) || 0;
+    return ((a % 360) + 360) % 360;
+  }
+
+  function lockWanted() {
+    return ui.view === "game" && (S.settings.lockScreen || "landscape") !== "off";
+  }
+
+  function applyLock() {
+    const body = document.body;
+    if (!lockWanted()) {
+      lockBase = null;
+      lockTurn = 0;
+      body.classList.remove("turned");
+      body.style.cssText = "";
+      if (screen.orientation && screen.orientation.unlock) {
+        try {
+          screen.orientation.unlock();
+        } catch (e) {
+          /* not locked */
+        }
+      }
+      return;
+    }
+    const a = deviceAngle();
+    if (lockBase == null) {
+      // Pin to the wanted orientation, keeping the way it's held now if it fits.
+      const isLand = a === 90 || a === 270;
+      const wantLand = (S.settings.lockScreen || "landscape") === "landscape";
+      lockBase = isLand === wantLand ? a : wantLand ? 90 : 0;
+      const type = { 0: "portrait-primary", 90: "landscape-primary", 180: "portrait-secondary", 270: "landscape-secondary" }[lockBase];
+      if (screen.orientation && screen.orientation.lock) screen.orientation.lock(type).catch(() => {});
+    }
+    lockTurn = (((lockBase - a) % 360) + 360) % 360;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    body.classList.toggle("turned", lockTurn !== 0);
+    // --vh: the height the page has after turning, for sizing menus.
+    const vh = lockTurn === 90 || lockTurn === 270 ? W : H;
+    if (lockTurn === 0) body.style.cssText = "";
+    else if (lockTurn === 180) body.style.cssText = `--vh:${vh}px;position:fixed;left:0;top:0;min-height:0;overflow:hidden;width:${W}px;height:${H}px;transform-origin:50% 50%;transform:rotate(180deg)`;
+    else if (lockTurn === 90) body.style.cssText = `--vh:${vh}px;position:fixed;left:0;top:0;min-height:0;overflow:hidden;width:${H}px;height:${W}px;transform-origin:0 0;transform:translateX(${W}px) rotate(90deg)`;
+    else body.style.cssText = `--vh:${vh}px;position:fixed;left:0;top:0;min-height:0;overflow:hidden;width:${H}px;height:${W}px;transform-origin:0 0;transform:translateY(${H}px) rotate(-90deg)`;
+  }
+
+  // The size the page actually has once the lock has turned it.
+  function viewSize() {
+    const sideways = lockTurn === 90 || lockTurn === 270;
+    return sideways ? [window.innerHeight, window.innerWidth] : [window.innerWidth, window.innerHeight];
+  }
+
   function isLandscape() {
-    return window.innerWidth > window.innerHeight * 1.15;
+    const [w, h] = viewSize();
+    return w > h * 1.15;
   }
   function random(n) {
     return Math.floor(Math.random() * n);
@@ -390,11 +452,10 @@
     return `<div class="tile ${i === st.active ? "active" : ""} ${p.out ? "out" : ""} ${p.lethal ? "lethal" : ""}" style="grid-row:${pos[0]};grid-column:${pos[1]}">
       <div class="tile-inner r${rot} ${S.settings.showArt && seat.art ? "has-art" : ""}" style="--c:${esc(seat.color)}${S.settings.showArt && seat.art ? `;--art:url('${esc(seat.art)}')` : ""}">
         <div class="life-wrap">
-          <button class="zone q tl" data-life="-1" data-hold="10" data-seat="${i}" aria-label="−1"><small>−10</small></button>
-          <button class="zone q bl" data-life="-1" data-hold="5" data-seat="${i}" aria-label="−1"><small>−5</small></button>
-          <button class="zone q tr" data-life="1" data-hold="10" data-seat="${i}" aria-label="+1"><small>+10</small></button>
-          <button class="zone q br" data-life="1" data-hold="5" data-seat="${i}" aria-label="+1"><small>+5</small></button>
-          <span class="sign minus">−</span><span class="sign plus">+</span>
+          <button class="zone half minus" data-life="-1" data-seat="${i}" aria-label="−1"><span class="sign">−</span></button>
+          <button class="zone half plus" data-life="1" data-seat="${i}" aria-label="+1"><span class="sign">+</span></button>
+          <div class="jumps minus"><button class="jump" data-life="-10" data-seat="${i}">−10</button><button class="jump" data-life="-5" data-seat="${i}">−5</button></div>
+          <div class="jumps plus"><button class="jump" data-life="10" data-seat="${i}">+10</button><button class="jump" data-life="5" data-seat="${i}">+5</button></div>
           <div class="life">${p.life}${pend ? `<span class="pending">${fmtDelta(pend)}</span>` : ""}</div>
           <button class="zone center" data-center data-seat="${i}" aria-label="${t("editLife")}"></button>
         </div>
@@ -1101,6 +1162,10 @@
         <label class="field"><span>${t("language")}</span><select data-change="lang"><option value="en" ${st.lang === "en" ? "selected" : ""}>English</option><option value="he" ${st.lang === "he" ? "selected" : ""}>עברית</option></select></label>
         <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
         ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}${toggle("faceMe")}${toggle("sound")}
+        <label class="field"><span>${t("lockScreen")}</span><select data-change="lockScreen">${["landscape", "portrait", "off"]
+          .map((v) => `<option value="${v}" ${(st.lockScreen || "landscape") === v ? "selected" : ""}>${t("lock_" + v)}</option>`)
+          .join("")}</select></label>
+        <p class="muted small">${t("lockScreenHint")}</p>
         <p class="muted small">${t("controlsHint")}</p>
       </section>
       <section><h2>⭐ ${t("oneTapTitle")}</h2>
@@ -1164,6 +1229,7 @@
     ui.panel = null;
     ui.attrib = null;
     closeModal();
+    applyLock();
     render();
     window.scrollTo(0, 0);
     updateWake();
@@ -1181,6 +1247,7 @@
         <button class="btn" data-action="tokenModal" data-token="monarch">👑 ${t("monarch")}</button>
         <button class="btn" data-action="tokenModal" data-token="initiative">🏰 ${t("initiative")}</button>
         <button class="btn" data-action="toggleFace">🔄 ${S.settings.faceMe ? t("faceSeats") : t("faceMeAction")}</button>
+        ${lockWanted() ? `<button class="btn" data-action="turn180">🙃 ${t("turn180")}</button>` : ""}
         ${canReroll ? `<button class="btn" data-action="reroll">🎲 ${t("rerollFirst")}</button>` : ""}
         <button class="btn primary" data-action="endPrompt">🏁 ${t("endGame")}</button>
         <button class="btn" data-action="restartGame">🔄 ${t("newGameSamePod")}</button>
@@ -1453,6 +1520,12 @@
     },
     cmdBy: (el) => {
       ui.cmdBy[Number(el.dataset.seat)] = el.dataset.v === "" ? null : Number(el.dataset.v);
+      render();
+    },
+    turn180: () => {
+      lockBase = (lockBase + 180) % 360;
+      closeModal();
+      applyLock();
       render();
     },
     toggleFace: () => {
@@ -2198,6 +2271,10 @@
       Store.save();
       render();
     },
+    lockScreen: (el) => {
+      S.settings.lockScreen = el.value;
+      Store.save();
+    },
     defaultLife: (el) => {
       S.settings.startingLife = clampLife(el.value);
       Store.save();
@@ -2369,24 +2446,15 @@
     if (q.length >= 2) acTimer = setTimeout(() => autocomplete(q), 250);
   });
 
-  // Each tile is split into four corners and a center, as its player sees it.
-  // Corners: tap ±1; hold a top corner for ±10, a bottom corner for ±5, and
-  // keep holding to repeat. Center (the number): tap to edit, drag up or down
-  // to count up or down.
-  let hold = null;
+  // Every control on a tile does what it shows on a plain tap: the left and
+  // right halves are −1 / +1, the −10 −5 / +5 +10 buttons jump by that much,
+  // and the number opens the editor (or counts when dragged up or down).
   let swipe = null;
   const SWIPE_PX = 22;
-  function stopHold() {
-    if (hold) clearTimeout(hold.timer);
-    hold = null;
-  }
   function lifeTap(seat, d) {
     if (liveState().players[seat].out) return false;
     queue({ type: "life", seat, source: null }, d);
     return true;
-  }
-  function buzz() {
-    if (navigator.vibrate) navigator.vibrate(15);
   }
   app.addEventListener("pointerdown", (e) => {
     const center = e.target.closest("[data-center]");
@@ -2395,33 +2463,15 @@
       const seat = Number(center.dataset.seat);
       if (liveState().players[seat].out) return;
       const inner = center.closest(".tile-inner");
-      const rot = Number((inner.className.match(/\br(\d+)\b/) || [0, 0])[1]);
+      const rot = Number((inner.className.match(/\br(\d+)\b/) || [0, 0])[1]) + lockTurn;
       swipe = { seat, x0: e.clientX, y0: e.clientY, rad: (rot * Math.PI) / 180, steps: 0, moved: false };
       return;
     }
     const zone = e.target.closest("[data-life]");
     if (!zone) return;
     e.preventDefault();
-    stopHold();
-    const seat = Number(zone.dataset.seat);
     const d = Number(zone.dataset.life);
-    if (!lifeTap(seat, d)) return;
-    Usage.track("life:tap");
-    const step = Number(zone.dataset.hold) || 10;
-    hold = {
-      timer: setTimeout(() => {
-        buzz();
-        Usage.track("life:hold" + step);
-        lifeTap(seat, d * (step - 1)); // the first tap already counted 1
-        const repeat = () => {
-          if (!hold) return;
-          buzz();
-          lifeTap(seat, d * step);
-          hold.timer = setTimeout(repeat, 650);
-        };
-        if (hold) hold.timer = setTimeout(repeat, 650);
-      }, 450),
-    };
+    if (lifeTap(Number(zone.dataset.seat), d)) Usage.track(Math.abs(d) === 1 ? "life:tap" : "life:jump" + Math.abs(d));
   });
   window.addEventListener("pointermove", (e) => {
     if (!swipe) return;
@@ -2450,9 +2500,6 @@
   window.addEventListener("pointercancel", () => {
     swipe = null;
   });
-  window.addEventListener("pointerup", stopHold);
-  window.addEventListener("pointercancel", stopHold);
-  window.addEventListener("blur", stopHold);
   app.addEventListener("contextmenu", (e) => {
     if (ui.view === "game") e.preventDefault();
   });
@@ -2469,10 +2516,14 @@
   });
 
   let wasLandscape = isLandscape();
-  window.addEventListener("resize", () => {
+  function onTurn() {
+    applyLock();
     if (ui.view === "game" && isLandscape() !== wasLandscape) render();
     wasLandscape = isLandscape();
-  });
+  }
+  window.addEventListener("resize", onTurn);
+  window.addEventListener("orientationchange", () => setTimeout(onTurn, 250));
+  if (screen.orientation) screen.orientation.addEventListener("change", onTurn);
 
   setInterval(() => {
     const el = document.getElementById("turnTimer");
@@ -2481,6 +2532,7 @@
 
   restoreGame();
   ui.view = game ? "game" : "home";
+  applyLock();
   render();
   updateWake();
   takeFragment();

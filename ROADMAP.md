@@ -6,7 +6,7 @@ The app now keeps a local **usage log** (Settings → Usage log). It counts even
 
 | Event | Meaning |
 | --- | --- |
-| `life:tap`, `life:hold10`, `life:hold5`, `life:swipe` | How life gets changed: corner taps, top/bottom corner holds, dragging the number |
+| `life:tap`, `life:jump5`, `life:jump10`, `life:swipe` | How life gets changed: ±1 halves, the ±5 / ±10 buttons, dragging the number |
 | `life:editor`, `life:editor:set/lose/gain` | Tapping the number to open the editor, and which mode was applied |
 | `attrib:player/paid/unknown:early/late` | "From whom?" answers, and whether they came while still counting (early) or after the pause (late) |
 | `tap:<action>` | Every button, e.g. `tap:cmd`, `tap:panel`, `tap:undo`, `tap:nextTurn`, `tap:toggleFace`, `tap:randomDecks`, `tap:checkDeck` |
@@ -17,7 +17,7 @@ The app now keeps a local **usage log** (Settings → Usage log). It counts even
 
 ## Questions the data should answer
 
-1. **Life input.** If `life:swipe` or `life:editor` rival `life:tap`, make them more prominent (larger center, hint on first game). If `life:hold5` is rare, give the bottom corners another job.
+1. **Life input.** If `life:swipe` or `life:editor` rival `life:tap`, make them more prominent (larger center, hint on first game). If `life:jump5` or `life:jump10` is rare, drop that button to declutter the tile.
 2. **Attribution.** A high share of `attrib:unknown` or of `late` answers means the strip is still missed: consider drag-to-attribute (PRD Phase 3) or a larger strip.
 3. **Commander damage.** If `tap:panel` is mostly followed by `tap:cmd`, put commander damage on the tile itself (tap a commander badge for +1) instead of in the panel.
 4. **Face me vs. seats.** If `tap:toggleFace` is common, make "face me" the default when one person runs the app.

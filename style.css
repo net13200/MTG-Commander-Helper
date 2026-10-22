@@ -376,7 +376,7 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
   position: relative;
   width: 100%;
   max-width: 520px;
-  max-height: calc(100dvh - 32px);
+  max-height: calc(var(--vh, 100dvh) - 32px);
   overflow-y: auto;
   padding: 18px;
   border-radius: 18px;
@@ -436,22 +436,19 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 .kept { font-size: 0.85rem; color: var(--muted); }
 .check-head .btn { white-space: nowrap; flex: none; }
 
-/* ---------- Life zones: four corners (tap ±1, hold ±10 / ±5) and the number ---------- */
+/* ---------- Life zones: halves (−1 / +1), jump buttons and the number ---------- */
 
-.zone.q { width: 50%; height: 50%; padding: 0; display: block; }
-.zone.q.tl { left: 0; top: 0; }
-.zone.q.bl { left: 0; top: 50%; }
-.zone.q.tr { right: 0; left: auto; top: 0; }
-.zone.q.br { right: 0; left: auto; top: 50%; }
-.zone.q small { position: absolute; font-size: clamp(9px, 4.5cqmin, 14px); font-weight: 600; color: rgba(255, 255, 255, 0.4); }
-.zone.tl small { top: 6px; left: 8px; }
-.zone.bl small { bottom: 6px; left: 8px; }
-.zone.tr small { top: 6px; right: 8px; }
-.zone.br small { bottom: 6px; right: 8px; }
-.sign { position: absolute; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: clamp(16px, 12cqmin, 44px); font-weight: 300; color: rgba(255, 255, 255, 0.35); }
-.sign.minus { left: 5%; }
-.sign.plus { right: 5%; }
-.zone.center { position: absolute; left: 27%; right: 27%; top: 16%; bottom: 16%; width: auto; border: none; background: transparent; touch-action: none; border-radius: 24px; }
+.zone.half { width: 50%; }
+.zone.half .sign { font-size: clamp(16px, 12cqmin, 44px); }
+.zone.minus.half { justify-content: flex-start; padding-left: clamp(48px, 21cqmin, 76px); }
+.zone.plus.half { justify-content: flex-end; padding-right: clamp(48px, 21cqmin, 76px); }
+/* Side middles: tile corners meet at the board's center, under the turn bar. */
+.jumps { position: absolute; top: 50%; transform: translateY(-50%); z-index: 2; display: flex; flex-direction: column; gap: 8px; }
+.jumps.minus { left: 6px; }
+.jumps.plus { right: 6px; }
+.jump { min-width: clamp(34px, 15cqmin, 56px); height: clamp(28px, 11cqmin, 44px); padding: 0 0.5em; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(0, 0, 0, 0.35); color: #fff; font-size: clamp(11px, 5.5cqmin, 18px); font-weight: 700; touch-action: none; }
+.jump:active { background: rgba(255, 255, 255, 0.2); }
+.zone.center { position: absolute; left: 27%; right: 27%; top: 24%; bottom: 14%; width: auto; border: none; background: transparent; touch-action: none; border-radius: 24px; }
 .zone.center:active { background: rgba(255, 255, 255, 0.06); }
 .life { font-size: min(58cqh, 44cqw); }
 
@@ -487,8 +484,10 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 
 /* ---------- Moxfield sync and usage log ---------- */
 
-.sync-list { max-height: 45dvh; overflow-y: auto; }
+.sync-list { max-height: calc(var(--vh, 100dvh) * 0.45); overflow-y: auto; }
 .tag.new { background: color-mix(in srgb, var(--ok) 30%, var(--surface)); }
 .tag.update { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
 .tag.same { color: var(--muted); }
 table.usage td:last-child { text-align: end; font-variant-numeric: tabular-nums; }
+
+body.turned { overflow: hidden; }
