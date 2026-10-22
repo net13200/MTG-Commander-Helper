@@ -105,7 +105,8 @@
     if (lockBase == null) {
       // Pin to the wanted orientation, keeping the way it's held now if it fits.
       const isLand = a === 90 || a === 270;
-      const wantLand = (S.settings.lockScreen || "landscape") === "landscape";
+      // "Face me" is one person holding the phone: that's portrait.
+      const wantLand = (S.settings.lockScreen || "landscape") === "landscape" && !S.settings.faceMe;
       lockBase = isLand === wantLand ? a : wantLand ? 90 : 0;
       const type = { 0: "portrait-primary", 90: "landscape-primary", 180: "portrait-secondary", 270: "landscape-secondary" }[lockBase];
       if (screen.orientation && screen.orientation.lock) screen.orientation.lock(type).catch(() => {});
@@ -1792,6 +1793,8 @@
       S.settings.faceMe = !S.settings.faceMe;
       Store.save();
       closeModal();
+      lockBase = null; // re-pin: portrait for "face me", the table setting otherwise
+      applyLock();
       render();
     },
     lifeMode: (el) => {
