@@ -287,10 +287,13 @@
       case "life":
         return t("ev_life", { name, d: fmtDelta(ev.delta) }) + (ev.source === ev.seat ? t("ev_paid") : Number.isInteger(ev.source) ? t("ev_from", { name: nm(ev.source) }) : "");
       case "cmd":
-        return (
-          t("ev_cmd", { name, d: fmtDelta(ev.delta), src: nm(ev.from), cmd: cmdNames(seats[ev.from] || {})[ev.idx] || "" }) +
-          (Number.isInteger(ev.by) && ev.by !== ev.from ? t("ev_controlled", { name: nm(ev.by) }) : "")
-        );
+      {
+        // Name whoever dealt it first; the owner only matters when they didn't.
+        const cmd = cmdNames(seats[ev.from] || {})[ev.idx] || "";
+        return Number.isInteger(ev.by) && ev.by !== ev.from
+          ? t("ev_cmdBy", { name, d: fmtDelta(ev.delta), by: nm(ev.by), owner: nm(ev.from), cmd })
+          : t("ev_cmd", { name, d: fmtDelta(ev.delta), src: nm(ev.from), cmd });
+      }
       case "poison":
         return t("ev_poison", { name, d: fmtDelta(ev.delta) });
       case "tax":
