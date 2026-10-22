@@ -621,6 +621,7 @@
           .join("") || `<p class="muted">${t("noDecksYet")}</p>`}
         <button class="btn primary" data-action="openDeck" data-owner="${p.id}">+ ${t("addDeck")}</button>
       </section>
+      <button class="btn" data-action="shareOpen" data-id="${p.id}">📤 ${t("shareThisPlayer")}</button>
       <button class="btn danger" data-action="deletePlayer" data-id="${p.id}">${t("deletePlayer")}</button>
     </div>`;
   }
@@ -1653,8 +1654,10 @@
       const by = ui.cmdBy[seat];
       queue(by == null ? { type: "cmd", seat, from, idx } : { type: "cmd", seat, from, idx, by }, d);
     },
-    shareOpen: () => {
-      ui.share = { ids: new Set(S.players.filter((p) => !p.guest).map((p) => p.id)), history: true };
+    shareOpen: (el) => {
+      // From a player's page: just that player; from the list: everyone.
+      const one = el && el.dataset.id;
+      ui.share = { ids: new Set(one ? [one] : S.players.filter((p) => !p.guest).map((p) => p.id)), history: !one };
       shareModal();
     },
     shareLink: async () => {
