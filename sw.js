@@ -1,13 +1,17 @@
 // Offline shell: the app's own files are served cache-first. Commander art
 // from Scryfall is cached on first view so tiles keep it offline; Scryfall
 // API calls go straight to the network, the tracker never needs them.
-const CACHE = "ct-v5";
+const CACHE = "ct-v6";
 const ART = "ct-art-v1";
 const SHELL = [
   "./",
   "index.html",
   "style.css",
   "icon.svg",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
+  "icons/maskable-512.png",
+  "icons/apple-touch-icon.png",
   "manifest.webmanifest",
   "js/i18n.js",
   "js/store.js",
