@@ -504,3 +504,7 @@ body.turned { overflow: hidden; }
 .cmdhit:active { background: rgba(255, 255, 255, 0.2); }
 .cmdhit.own { border-style: dashed; border-color: rgba(255, 255, 255, 0.45); background: rgba(0, 0, 0, 0.25); }
 .chip.amt { min-width: 52px; justify-content: center; font-weight: 700; }
+.help-way { padding: 10px 12px; border-radius: 12px; background: var(--surface-2); gap: 6px; }
+.help-way h3 { margin: 0; color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 1rem; }
+.help-way p { margin: 4px 0 0; }
+.help-way .howto li { line-height: 1.45; }

@@ -612,7 +612,7 @@
           <input class="emoji-in" value="${AVATARS.includes(p.avatar) ? "" : esc(p.avatar)}" maxlength="4" placeholder="Aa" data-change="pAvatarCustom" aria-label="${t("avatar")}"></div>
       </section>
       <section><h2>${t("decks")}</h2>
-        <div class="inline"><input value="${esc(p.moxfieldUser || "")}" placeholder="${t("moxUser")}" data-change="pMox" autocomplete="off" autocapitalize="off"><button class="btn" data-action="moxSyncHelp" data-id="${p.id}">🔄 ${t("syncFromMox")}</button></div>
+        <div class="inline"><input value="${esc(p.moxfieldUser || "")}" placeholder="${t("moxUser")}" data-change="pMox" autocomplete="off" autocapitalize="off"><button class="btn" data-action="moxHelp" data-id="${p.id}">🔄 ${t("syncFromMox")}</button></div>
         ${decks
           .map(
             (d) =>
@@ -681,7 +681,7 @@
     const scroll = modalRoot.querySelector(".modal") ? modalRoot.querySelector(".modal").scrollTop : 0;
     openModal(
       `<h2>${d.id ? t("editDeck") : t("addDeck")} <small class="muted">${esc(owner ? owner.name : "")}</small></h2>
-      <form class="field" data-submit="moxImport"><span>${t("importMoxfield")}</span>
+      <form class="field" data-submit="moxImport"><span>${t("importMoxfield")} <button type="button" class="linkish" data-action="moxHelp" data-id="${esc(d.ownerId || "")}">❓ ${t("help_link")}</button></span>
         <div class="inline"><input id="dMox" inputmode="url" placeholder="https://moxfield.com/decks/…" value="${esc(d.moxUrl || (d.source && d.source.url) || "")}" autocomplete="off"><button class="btn" ${d.importing ? "disabled" : ""}>${d.importing ? "…" : t("import")}</button></div></form>
       ${d.moxStep ? moxSteps(d) : ""}
       ${d.importMsg ? `<p class="${d.importOk ? "okmsg" : "warn"}">${d.importMsg}</p>` : ""}
@@ -708,6 +708,52 @@
     if (m) m.scrollTop = scroll;
   }
 
+  function detectDevice() {
+    const ua = navigator.userAgent || "";
+    if (/iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) return "ios";
+    if (/Android/i.test(ua)) return "android";
+    return "desktop";
+  }
+
+  function homeScreenApp() {
+    return navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  }
+
+  // Step-by-step guide to getting Moxfield decks in, for this kind of device.
+  function helpModal() {
+    const { device, playerId } = ui.help;
+    const p = playerId && Store.player(playerId);
+    const user = (p && p.moxfieldUser) || "";
+    const bm = Decks.bookmarklet(appUrl());
+    const li = (items) => items.map((x) => `<li>${x}</li>`).join("");
+    const copyBtn = `<button class="btn small primary" data-action="copyBookmarklet" data-target="bmCodeHelp">📋 ${t("copyCode")}</button><textarea id="bmCodeHelp" rows="2" readonly hidden>${esc(bm)}</textarea>`;
+    const setup = {
+      android: [`${t("help_s_copy")} ${copyBtn}`, t("help_and_s1"), t("help_and_s2"), t("help_and_s3")],
+      ios: [`${t("help_s_copy")} ${copyBtn}`, t("help_ios_s1"), t("help_ios_s2"), t("help_ios_s3")],
+      desktop: [`${t("help_desk_s1")} <a class="btn small primary" href="${esc(bm)}" draggable="true">⭐ ${t("bookmarkletName")}</a>`, t("help_desk_s2")],
+    }[device];
+    const profile = user
+      ? `<a class="btn small" href="https://moxfield.com/users/${encodeURIComponent(user)}" target="_blank" rel="noopener">${t("openProfile", { user })} ↗</a>`
+      : `<a class="btn small" href="https://moxfield.com" target="_blank" rel="noopener">moxfield.com ↗</a>`;
+    const use = [`${t("help_u1")} ${profile}`, t("help_u2_" + device), t("help_u3"), t("help_u4")];
+    const iosHome = device === "ios" && homeScreenApp();
+    const way1 = `<section class="help-way"><h3>1️⃣ ${t("help_way1")}</h3><ol class="howto">${li([t("help_w1_1"), t("help_w1_2"), t("help_w1_3"), t("help_w1_4")])}</ol></section>`;
+    const way2 = `<section class="help-way"><h3>2️⃣ ${t("help_way2")}</h3>
+      <p class="small"><b>${t("help_setup")}</b></p><ol class="howto">${li(setup)}</ol>
+      <p class="small"><b>${t("help_use")}</b></p><ol class="howto">${li(use)}</ol></section>`;
+    openModal(
+      `<h2>📥 ${t("help_title")}</h2>
+      <p class="small">${t("help_intro")}</p>
+      <div class="chips"><small class="muted">${t("help_device")}</small>${["android", "ios", "desktop"]
+        .map((d) => `<button class="chip ${device === d ? "on" : ""}" data-action="helpDevice" data-v="${d}">${t("dev_" + d)}</button>`)
+        .join("")}</div>
+      ${iosHome ? `<p class="warn">${t("help_t3")}</p>` : ""}
+      ${way1}${way2}
+      <section class="help-way"><h3>🛟 ${t("help_trouble")}</h3><ul class="howto">${li([t("help_t1"), t("help_t2"), ...(device === "ios" && !iosHome ? [t("help_t3")] : [])])}</ul></section>
+      <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`
+    );
+  }
+
   function moxSteps(d) {
     const id = Decks.moxfieldId(d.moxUrl);
     const link = id ? "https://moxfield.com/decks/" + id : "https://moxfield.com";
@@ -717,7 +763,7 @@
         <li><a class="btn small" href="${esc(link)}" target="_blank" rel="noopener">${t("openOnMoxfield")} ↗</a> ${t("moxStepExport")}</li>
         <li>${t("moxStepBack")} <button class="btn small primary" data-action="pasteClipboard">📋 ${t("pasteClipboard")}</button></li>
       </ol>
-      <p class="muted small">${t("moxStepOneTap")} <button class="linkish" data-action="nav" data-to="settings">${t("settings")} ›</button></p>
+      <p class="small"><button class="linkish" data-action="moxHelp">❓ ${t("help_link")}</button></p>
     </div>`;
   }
 
@@ -1305,6 +1351,7 @@
       </section>
       <section><h2>⭐ ${t("oneTapTitle")}</h2>
         <p class="small">${t("oneTapIntro")}</p>
+        <p class="small"><button class="linkish" data-action="moxHelp">❓ ${t("help_link")}</button></p>
         <div class="actions"><a class="btn primary" href="${esc(Decks.bookmarklet(appUrl()))}" draggable="true">⭐ ${t("bookmarkletName")}</a><button class="btn" data-action="copyBookmarklet">📋 ${t("copyCode")}</button></div>
         <textarea id="bmCode" rows="3" readonly hidden>${esc(Decks.bookmarklet(appUrl()))}</textarea>
         <ol class="small howto"><li>${t("oneTapDesktop")}</li><li>${t("oneTapMobile")}</li><li>${t("oneTapUse")}</li></ol>
@@ -2126,20 +2173,14 @@
       toast(touched.length ? t("syncedN", { n: touched.length }) : t("syncNothing"));
       if (touched.length) checkQueue(touched);
     },
-    moxSyncHelp: (el) => {
-      const p = Store.player(el.dataset.id);
-      const user = (p && p.moxfieldUser) || "";
-      openModal(
-        `<h2>🔄 ${t("syncFromMox")}</h2>
-        <ol class="howto">
-          <li>${user ? `<a class="btn small" href="https://moxfield.com/users/${encodeURIComponent(user)}" target="_blank" rel="noopener">${t("openProfile", { user })} ↗</a>` : t("openProfileGeneric")}</li>
-          <li>${t("tapBookmark")}</li>
-          <li>${t("pickDecksHere")}</li>
-        </ol>
-        <p class="muted small">${t("noBookmarkYet")} <button class="linkish" data-action="nav" data-to="settings">${t("settings")} ›</button></p>
-        <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`,
-        "small"
-      );
+    moxHelp: (el) => {
+      ui.help = { device: detectDevice(), playerId: (el && el.dataset.id) || (ui.view === "player" ? ui.params.id : null) };
+      Usage.track("help:moxfield:" + ui.help.device);
+      helpModal();
+    },
+    helpDevice: (el) => {
+      ui.help.device = el.dataset.v;
+      helpModal();
     },
     incomingFor: (el) => {
       const inc = ui.incoming;
@@ -2179,12 +2220,12 @@
       };
       runCheck(ui.deck);
     },
-    copyBookmarklet: async () => {
+    copyBookmarklet: async (el) => {
       try {
         await navigator.clipboard.writeText(Decks.bookmarklet(appUrl()));
         toast(t("copied"));
       } catch (e) {
-        const box = $("#bmCode");
+        const box = $("#" + ((el && el.dataset.target) || "bmCode"));
         if (box) {
           box.hidden = false;
           box.select();
