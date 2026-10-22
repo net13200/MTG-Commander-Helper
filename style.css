@@ -508,3 +508,15 @@ body.turned { overflow: hidden; }
 .help-way h3 { margin: 0; color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 1rem; }
 .help-way p { margin: 4px 0 0; }
 .help-way .howto li { line-height: 1.45; }
+
+/* ---------- Commander menu (press and hold an icon) ---------- */
+
+.cm-value { display: flex; align-items: baseline; justify-content: center; gap: 6px; }
+.cm-value b { font-size: 3rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.cm-value span { color: var(--muted); font-size: 1.1rem; }
+.cm-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cm-steps .btn { min-height: 52px; font-size: 1.15rem; }
+.cm-lethal { width: 100%; }
+.cmdhit { position: relative; }
+.cmdhit .dealer { position: absolute; left: 1.2em; bottom: -2px; font-style: normal; }
+.cmdhit .dealer .avatar { width: 1.1em; height: 1.1em; font-size: 0.6em; box-shadow: 0 0 0 1px #000; }

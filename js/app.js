@@ -17,7 +17,7 @@
   const BATCH_MS = 1500;
   const ATTRIB_MS = 8000;
 
-  const ui = { ownBy: {}, cmdBy: {}, edit: null, view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
+  const ui = { cm: null, cmBy: {}, cmdBy: {}, edit: null, view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
   let game = Store.loadGame();
   const pending = new Map(); // batch key -> { ev, timer }
   let confirmCb = null;
@@ -263,6 +263,7 @@
 
   function newGame(setup) {
     pending.clear();
+    ui.cmBy = {};
     game = { id: Store.uid(), setup, events: [], pending: [] };
     persist();
   }
@@ -467,30 +468,66 @@
   function cmdStrip(i, p) {
     const hits = game.setup.seats.flatMap((s, j) => (j === i ? [] : cmdNames(s).map((name, idx) => ({ s, j, idx, name, v: p.cmd[j + ":" + idx] || 0 }))));
     const own = cmdNames(game.setup.seats[i]).map((name, idx) => ({ s: game.setup.seats[i], j: i, idx, name, v: p.cmd[i + ":" + idx] || 0 }));
+    const dealerTag = (h) => {
+      const by = ui.cmBy[pairKey(i, h.j, h.idx)];
+      return by != null && by !== h.j ? `<i class="dealer">${avatar(game.setup.seats[by])}</i>` : "";
+    };
     const btn = (h, action, cls) =>
-      `<button class="cmdhit ${cls || ""} ${h.v ? "has" : ""} ${h.v >= Game.LETHAL_CMD ? "hot" : ""}" data-action="${action}" data-seat="${i}" data-from="${h.j}" data-idx="${h.idx}" title="${esc(h.s.name)}: ${esc(h.name)}" aria-label="${esc(h.name)}">${cmdIcon(h.s, h.idx)}<b>${h.v || "+"}</b></button>`;
-    return `<div class="cmd-strip">${hits.map((h) => btn(h, "cmdHit")).join("")}${own.map((h) => btn(h, "cmdOwn", "own")).join("")}</div>`;
+      `<button class="cmdhit ${cls || ""} ${h.v ? "has" : ""} ${h.v >= Game.LETHAL_CMD ? "hot" : ""}" data-action="${action}" data-seat="${i}" data-from="${h.j}" data-idx="${h.idx}" title="${esc(h.s.name)}: ${esc(h.name)}" aria-label="${esc(h.name)}">${cmdIcon(h.s, h.idx)}${dealerTag(h)}<b>${h.v || "+"}</b></button>`;
+    return `<div class="cmd-strip">${hits.map((h) => btn(h, "cmdHit")).join("")}${own.map((h) => btn(h, "cmdHit", "own")).join("")}</div>`;
   }
 
-  function ownCmdModal() {
-    const { seat, idx, by } = ui.own;
-    const s = game.setup.seats[seat];
-    const others = liveState().alive.filter((x) => x !== seat);
+  // Press-and-hold menu for one commander's damage to one player: steps in
+  // both directions, "lethal", and who dealt it (remembered for later taps).
+  const pairKey = (seat, from, idx) => seat + ":" + from + ":" + idx;
+
+  function cmdDealer(seat, from, idx) {
+    const by = ui.cmBy[pairKey(seat, from, idx)];
+    return by == null ? (from === seat ? null : from) : by;
+  }
+
+  function cmdMenu() {
+    const { seat, from, idx } = ui.cm;
+    const st = liveState();
+    const seats = game.setup.seats;
+    const src = seats[from];
+    const v = st.players[seat].cmd[from + ":" + idx] || 0;
+    const own = from === seat;
+    const dealer = cmdDealer(seat, from, idx);
+    const blocked = own && dealer == null; // your own commander needs a controller
+    const dealers = own ? st.alive.filter((x) => x !== seat) : [from, ...st.alive.filter((x) => x !== from && x !== seat)];
     openModal(
-      `<h2>${cmdIcon(s, idx)} ${t("ownCmdTitle", { cmd: cmdNames(s)[idx] || "" })}</h2>
-      <p class="muted small">${t("ownCmdHint", { name: s.name })}</p>
-      <h3>${t("whoControls")}</h3>
-      <div class="chips">${others
-        .map((j) => `<button class="chip ${by === j ? "on" : ""}" data-action="ownBy" data-v="${j}">${avatar(game.setup.seats[j])}${esc(game.setup.seats[j].name)}</button>`)
+      `<h2>${cmdIcon(src, idx)} ${esc(cmdNames(src)[idx] || "")}</h2>
+      <p class="muted small">${t("cmTarget", { target: seats[seat].name, owner: src.name })}</p>
+      <div class="cm-value"><b>${v}</b><span>/ ${Game.LETHAL_CMD}</span></div>
+      <div class="cm-steps">${[-10, -5, -1, 1, 5, 10]
+        .map((n) => `<button class="btn ${n > 0 ? "primary" : ""}" data-action="cmStep" data-v="${n}" ${(n < 0 && v === 0) || (n > 0 && blocked) ? "disabled" : ""}>${n > 0 ? "+" : "−"}${Math.abs(n)}</button>`)
         .join("")}</div>
-      <h3>${t("addDamage")}</h3>
-      <div class="chips">${[1, 2, 3, 4, 5, 6, 7, 8, 10]
-        .map((n) => `<button class="chip amt" data-action="ownAmt" data-v="${n}" ${by == null ? "disabled" : ""}>+${n}</button>`)
+      <button class="btn danger cm-lethal" data-action="cmLethal" ${v >= Game.LETHAL_CMD || blocked ? "disabled" : ""}>☠ ${t("cmLethal")}</button>
+      <h3>${t("dealtBy")}</h3>
+      <div class="chips">${dealers
+        .map((j) => `<button class="chip ${dealer === j ? "on" : ""}" data-action="cmBy" data-v="${j}">${avatar(seats[j])}${esc(seats[j].name)}${j === from && !own ? ` <small>(${t("ownerDefault")})</small>` : ""}</button>`)
         .join("")}</div>
-      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button></div>`,
+      ${blocked ? `<p class="warn">${t("pickController")}</p>` : ""}
+      <div class="actions"><button class="btn" data-action="closeModal">${t("done")}</button></div>`,
       "small"
     );
   }
+
+  function cmdApply(seat, from, idx, delta) {
+    if (!delta || liveState().players[seat].out) return;
+    const by = cmdDealer(seat, from, idx);
+    if (by == null) return;
+    if (delta > 0 && S.settings.sound) Sound.play();
+    queue(by === from ? { type: "cmd", seat, from, idx } : { type: "cmd", seat, from, idx, by }, delta);
+  }
+
+  function openCmdMenu(seat, from, idx) {
+    ui.cm = { seat, from, idx };
+    Usage.track("cmd:menu");
+    cmdMenu();
+  }
+
 
   function attribStrip(i, st) {
     const seats = game.setup.seats;
@@ -1752,32 +1789,33 @@
       if (res.touchedDecks.length) checkQueue(res.touchedDecks);
       refreshArt();
     },
-    cmdOwn: (el) => {
-      const seat = Number(el.dataset.seat);
-      const idx = Number(el.dataset.idx);
-      if (liveState().players[seat].out) return;
-      const others = liveState().alive.filter((x) => x !== seat);
-      const last = ui.ownBy[seat + ":" + idx];
-      ui.own = { seat, idx, by: others.includes(last) ? last : others.length === 1 ? others[0] : null };
-      ownCmdModal();
+    cmStep: (el) => {
+      const { seat, from, idx } = ui.cm;
+      const n = Number(el.dataset.v);
+      const v = liveState().players[seat].cmd[from + ":" + idx] || 0;
+      cmdApply(seat, from, idx, n < 0 ? -Math.min(v, -n) : n);
+      cmdMenu();
     },
-    ownBy: (el) => {
-      ui.own.by = Number(el.dataset.v);
-      ownCmdModal();
+    cmLethal: () => {
+      const { seat, from, idx } = ui.cm;
+      const v = liveState().players[seat].cmd[from + ":" + idx] || 0;
+      cmdApply(seat, from, idx, Game.LETHAL_CMD - v);
+      cmdMenu();
     },
-    ownAmt: (el) => {
-      const { seat, idx, by } = ui.own;
-      if (by == null) return;
-      ui.ownBy[seat + ":" + idx] = by;
-      closeModal();
-      if (S.settings.sound) Sound.play();
-      queue({ type: "cmd", seat, from: seat, idx, by }, Number(el.dataset.v));
+    cmBy: (el) => {
+      const { seat, from, idx } = ui.cm;
+      const j = Number(el.dataset.v);
+      ui.cmBy[pairKey(seat, from, idx)] = j === from && from !== seat ? null : j;
+      cmdMenu();
     },
+    // Tap = +1 from that commander, dealt by whoever was picked last (the
+    // owner by default). Your own commander needs a controller first.
     cmdHit: (el) => {
       const seat = Number(el.dataset.seat);
-      if (liveState().players[seat].out) return;
-      if (S.settings.sound) Sound.play();
-      queue({ type: "cmd", seat, from: Number(el.dataset.from), idx: Number(el.dataset.idx) }, 1);
+      const from = Number(el.dataset.from);
+      const idx = Number(el.dataset.idx);
+      if (cmdDealer(seat, from, idx) == null) return openCmdMenu(seat, from, idx);
+      cmdApply(seat, from, idx, 1);
     },
     cmdBy: (el) => {
       ui.cmdBy[Number(el.dataset.seat)] = el.dataset.v === "" ? null : Number(el.dataset.v);
@@ -2701,6 +2739,7 @@
     const fn = A[el.dataset.action];
     if (!fn) return;
     e.preventDefault();
+    if (el.dataset.action === "cmdHit" && Date.now() < swallowClick) return; // that was a hold
     if (el.dataset.action !== "nav") Usage.track("tap:" + el.dataset.action);
     fn(el, e);
   });
@@ -2735,6 +2774,26 @@
     queue({ type: "life", seat, source: null }, d);
     return true;
   }
+  // Press and hold a commander icon for its menu; a plain tap stays +1.
+  let cmHold = null;
+  let swallowClick = 0;
+  app.addEventListener("pointerdown", (e) => {
+    const hit = e.target.closest(".cmdhit");
+    if (!hit) return;
+    clearTimeout(cmHold);
+    cmHold = setTimeout(() => {
+      cmHold = null;
+      swallowClick = Date.now() + 800;
+      if (navigator.vibrate) navigator.vibrate(15);
+      openCmdMenu(Number(hit.dataset.seat), Number(hit.dataset.from), Number(hit.dataset.idx));
+    }, 450);
+  });
+  const dropHold = () => {
+    clearTimeout(cmHold);
+    cmHold = null;
+  };
+  window.addEventListener("pointerup", dropHold);
+  window.addEventListener("pointercancel", dropHold);
   app.addEventListener("pointerdown", (e) => {
     const center = e.target.closest("[data-center]");
     if (center) {
