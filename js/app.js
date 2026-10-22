@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { Store, Game, Stats, I18n, Decks, Recap } = window.CT;
+  const { Store, Game, Stats, I18n, Decks, Recap, Sound } = window.CT;
   const S = Store.data;
   const t = I18n.t;
   const $ = (sel) => document.querySelector(sel);
@@ -953,7 +953,7 @@
       <section>
         <label class="field"><span>${t("language")}</span><select data-change="lang"><option value="en" ${st.lang === "en" ? "selected" : ""}>English</option><option value="he" ${st.lang === "he" ? "selected" : ""}>עברית</option></select></label>
         <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
-        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}${toggle("faceMe")}
+        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}${toggle("faceMe")}${toggle("sound")}
         <label class="field"><span>${t("holdStep")}</span><select data-change="holdStep">${[5, 10].map((n) => `<option value="${n}" ${Number(st.holdStep || 10) === n ? "selected" : ""}>±${n}</option>`).join("")}</select></label>
         <p class="muted small">${t("holdStepHint")}</p>
       </section>
@@ -1277,6 +1277,7 @@
       const d = Number(el.dataset.d);
       const cur = liveState().players[seat].cmd[from + ":" + idx] || 0;
       if (cur + d < 0) return;
+      if (d > 0 && S.settings.sound) Sound.play();
       const by = ui.cmdBy[seat];
       queue(by == null ? { type: "cmd", seat, from, idx } : { type: "cmd", seat, from, idx, by }, d);
     },
