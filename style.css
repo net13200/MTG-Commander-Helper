@@ -502,3 +502,5 @@ body.turned { overflow: hidden; }
 .cmdhit:not(.has) b { opacity: 0.55; }
 .cmdhit.hot { background: rgba(229, 72, 77, 0.8); }
 .cmdhit:active { background: rgba(255, 255, 255, 0.2); }
+.cmdhit.own { border-style: dashed; border-color: rgba(255, 255, 255, 0.45); background: rgba(0, 0, 0, 0.25); }
+.chip.amt { min-width: 52px; justify-content: center; font-weight: 700; }

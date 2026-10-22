@@ -17,7 +17,7 @@
   const BATCH_MS = 1500;
   const ATTRIB_MS = 8000;
 
-  const ui = { cmdBy: {}, edit: null, view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
+  const ui = { ownBy: {}, cmdBy: {}, edit: null, view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
   let game = Store.loadGame();
   const pending = new Map(); // batch key -> { ev, timer }
   let confirmCb = null;
@@ -424,19 +424,6 @@
     if (st.monarch === i) badges.push(`<span class="badge" title="${t("monarch")}">👑</span>`);
     if (st.initiative === i) badges.push(`<span class="badge" title="${t("initiative")}">🏰</span>`);
     if (p.poison) badges.push(`<span class="badge poison">☠ ${p.poison}</span>`);
-    // Damage from your own commander (rare) stays a badge; opponents'
-    // commanders get their own tappable row below.
-    Object.entries(p.cmd)
-      .filter(([key, v]) => v > 0 && Number(key.split(":")[0]) === i)
-      .sort((a, b) => b[1] - a[1])
-      .forEach(([key, v]) => {
-        const [j, idx] = key.split(":").map(Number);
-        const src = game.setup.seats[j];
-        const names = cmdNames(src);
-        badges.push(
-          `<span class="badge cmd ${v >= Game.LETHAL_CMD ? "hot" : ""}" title="${esc(src.name)}: ${esc(names[idx] || "")}">${cmdIcon(src, idx)}${v}</span>`
-        );
-      });
     p.tax.forEach((casts) => {
       if (casts) badges.push(`<span class="badge">${t("taxShort")} +${casts * 2}</span>`);
     });
@@ -474,14 +461,34 @@
   }
 
   // One button per opposing commander: tap for +1 commander damage from it.
+  // The player's own commander comes last: it only hurts them once someone
+  // else controls it, so tapping it asks who and how much.
   function cmdStrip(i, p) {
     const hits = game.setup.seats.flatMap((s, j) => (j === i ? [] : cmdNames(s).map((name, idx) => ({ s, j, idx, name, v: p.cmd[j + ":" + idx] || 0 }))));
-    return `<div class="cmd-strip">${hits
-      .map(
-        (h) =>
-          `<button class="cmdhit ${h.v ? "has" : ""} ${h.v >= Game.LETHAL_CMD ? "hot" : ""}" data-action="cmdHit" data-seat="${i}" data-from="${h.j}" data-idx="${h.idx}" title="${esc(h.s.name)}: ${esc(h.name)}" aria-label="+1 ${esc(h.name)}">${cmdIcon(h.s, h.idx)}<b>${h.v || "+"}</b></button>`
-      )
-      .join("")}</div>`;
+    const own = cmdNames(game.setup.seats[i]).map((name, idx) => ({ s: game.setup.seats[i], j: i, idx, name, v: p.cmd[i + ":" + idx] || 0 }));
+    const btn = (h, action, cls) =>
+      `<button class="cmdhit ${cls || ""} ${h.v ? "has" : ""} ${h.v >= Game.LETHAL_CMD ? "hot" : ""}" data-action="${action}" data-seat="${i}" data-from="${h.j}" data-idx="${h.idx}" title="${esc(h.s.name)}: ${esc(h.name)}" aria-label="${esc(h.name)}">${cmdIcon(h.s, h.idx)}<b>${h.v || "+"}</b></button>`;
+    return `<div class="cmd-strip">${hits.map((h) => btn(h, "cmdHit")).join("")}${own.map((h) => btn(h, "cmdOwn", "own")).join("")}</div>`;
+  }
+
+  function ownCmdModal() {
+    const { seat, idx, by } = ui.own;
+    const s = game.setup.seats[seat];
+    const others = liveState().alive.filter((x) => x !== seat);
+    openModal(
+      `<h2>${cmdIcon(s, idx)} ${t("ownCmdTitle", { cmd: cmdNames(s)[idx] || "" })}</h2>
+      <p class="muted small">${t("ownCmdHint", { name: s.name })}</p>
+      <h3>${t("whoControls")}</h3>
+      <div class="chips">${others
+        .map((j) => `<button class="chip ${by === j ? "on" : ""}" data-action="ownBy" data-v="${j}">${avatar(game.setup.seats[j])}${esc(game.setup.seats[j].name)}</button>`)
+        .join("")}</div>
+      <h3>${t("addDamage")}</h3>
+      <div class="chips">${[1, 2, 3, 4, 5, 6, 7, 8, 10]
+        .map((n) => `<button class="chip amt" data-action="ownAmt" data-v="${n}" ${by == null ? "disabled" : ""}>+${n}</button>`)
+        .join("")}</div>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button></div>`,
+      "small"
+    );
   }
 
   function attribStrip(i, st) {
@@ -1693,6 +1700,27 @@
       toast(t("sharedDone", { p: res.playersAdded + res.playersMatched, d: res.decksAdded + res.decksUpdated, g: res.matchesAdded }));
       if (res.touchedDecks.length) checkQueue(res.touchedDecks);
       refreshArt();
+    },
+    cmdOwn: (el) => {
+      const seat = Number(el.dataset.seat);
+      const idx = Number(el.dataset.idx);
+      if (liveState().players[seat].out) return;
+      const others = liveState().alive.filter((x) => x !== seat);
+      const last = ui.ownBy[seat + ":" + idx];
+      ui.own = { seat, idx, by: others.includes(last) ? last : others.length === 1 ? others[0] : null };
+      ownCmdModal();
+    },
+    ownBy: (el) => {
+      ui.own.by = Number(el.dataset.v);
+      ownCmdModal();
+    },
+    ownAmt: (el) => {
+      const { seat, idx, by } = ui.own;
+      if (by == null) return;
+      ui.ownBy[seat + ":" + idx] = by;
+      closeModal();
+      if (S.settings.sound) Sound.play();
+      queue({ type: "cmd", seat, from: seat, idx, by }, Number(el.dataset.v));
     },
     cmdHit: (el) => {
       const seat = Number(el.dataset.seat);
