@@ -436,12 +436,24 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 .kept { font-size: 0.85rem; color: var(--muted); }
 .check-head .btn { white-space: nowrap; flex: none; }
 
-/* ---------- Life zones: outer = ±step on hold, inner = editor on hold ---------- */
+/* ---------- Life zones: four corners (tap ±1, hold ±10 / ±5) and the number ---------- */
 
-.zone.outer { width: 32%; }
-.zone.inner { width: 18%; }
-.zone.minus.inner { left: 32%; }
-.zone.plus.inner { right: 32%; left: auto; }
+.zone.q { width: 50%; height: 50%; padding: 0; display: block; }
+.zone.q.tl { left: 0; top: 0; }
+.zone.q.bl { left: 0; top: 50%; }
+.zone.q.tr { right: 0; left: auto; top: 0; }
+.zone.q.br { right: 0; left: auto; top: 50%; }
+.zone.q small { position: absolute; font-size: clamp(9px, 4.5cqmin, 14px); font-weight: 600; color: rgba(255, 255, 255, 0.4); }
+.zone.tl small { top: 6px; left: 8px; }
+.zone.bl small { bottom: 6px; left: 8px; }
+.zone.tr small { top: 6px; right: 8px; }
+.zone.br small { bottom: 6px; right: 8px; }
+.sign { position: absolute; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: clamp(16px, 12cqmin, 44px); font-weight: 300; color: rgba(255, 255, 255, 0.35); }
+.sign.minus { left: 5%; }
+.sign.plus { right: 5%; }
+.zone.center { position: absolute; left: 27%; right: 27%; top: 16%; bottom: 16%; width: auto; border: none; background: transparent; touch-action: none; border-radius: 24px; }
+.zone.center:active { background: rgba(255, 255, 255, 0.06); }
+.life { font-size: min(58cqh, 44cqw); }
 
 .badge.cmd { display: inline-flex; align-items: center; gap: 0.25em; padding-inline-start: 0.2em; }
 .badge.cmd .avatar { width: 1.35em; height: 1.35em; font-size: 0.8em; }
@@ -458,3 +470,25 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 #lifeAmt { font-size: 1.8rem; text-align: center; font-weight: 800; }
 .life-preview { margin: 0; text-align: center; font-size: 1.2rem; color: var(--muted); }
 .life-preview b { color: var(--ink); font-size: 1.4rem; }
+
+/* ---------- Commander icons ---------- */
+
+.cmd-icon { display: inline-grid; place-items: center; flex: none; width: 1.5em; height: 1.5em; border-radius: 50%; background: var(--surface-2) center 25% / cover no-repeat; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35); }
+.cmd-icon.emoji { background: none; box-shadow: none; font-size: 1.1em; }
+.badge.cmd .cmd-icon { width: 1.45em; height: 1.45em; font-size: 0.85em; }
+.plabel .cmd-icon { width: 26px; height: 26px; }
+.icon-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.icon-row .cmd-icon { width: 34px; height: 34px; font-size: 1.3rem; }
+
+/* ---------- Face me: the turn bar sits at the bottom edge ---------- */
+
+.board.faceme { bottom: calc(60px + env(safe-area-inset-bottom)); }
+.hub.bar { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); transform: translateX(-50%); }
+
+/* ---------- Moxfield sync and usage log ---------- */
+
+.sync-list { max-height: 45dvh; overflow-y: auto; }
+.tag.new { background: color-mix(in srgb, var(--ok) 30%, var(--surface)); }
+.tag.update { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
+.tag.same { color: var(--muted); }
+table.usage td:last-child { text-align: end; font-variant-numeric: tabular-nums; }

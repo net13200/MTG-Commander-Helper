@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { Store, Game, Stats, I18n, Decks, Recap, Sound } = window.CT;
+  const { Store, Game, Stats, I18n, Decks, Recap, Sound, Usage } = window.CT;
   const S = Store.data;
   const t = I18n.t;
   const $ = (sel) => document.querySelector(sel);
@@ -289,8 +289,10 @@
       .join("")}</div>`;
   }
 
-  function deckOptions(playerId, selectedId) {
-    return `<option value="">${t("noDeck")}</option>${Store.decksOf(playerId)
+  function deckOptions(playerId, selectedId, withRandom) {
+    const mine = Store.decksOf(playerId);
+    const rnd = withRandom && mine.length > 1 ? `<option value="__random" ${selectedId === "__random" ? "selected" : ""}>🎲 ${t("randomDeck")}</option>` : "";
+    return `<option value="">${t("noDeck")}</option>${rnd}${mine
       .map((d) => `<option value="${d.id}" ${d.id === selectedId ? "selected" : ""}>${esc(d.name)}</option>`)
       .join("")}`;
   }
@@ -316,7 +318,7 @@
       : su.seats
           .map((s, i) => {
             const p = Store.player(s.playerId);
-            return `<label class="row">${avatar(p)}<span class="grow">${esc(p.name)}</span><select data-change="seatDeck" data-seat="${i}">${deckOptions(p.id, s.deckId)}</select></label>`;
+            return `<label class="row">${avatar(p)}<span class="grow">${esc(p.name)}</span><select data-change="seatDeck" data-seat="${i}">${deckOptions(p.id, s.deckId, true)}</select></label>`;
           })
           .join("");
     const firstOpts = su.seats
@@ -330,7 +332,7 @@
       </section>
       <section><h2>${t("seating")}</h2><p class="muted small">${t("seatHint")}</p>${seatMap(su.seats)}</section>
       ${n ? `<section><h2>${t("decks")}</h2>
-        <label class="row"><input type="checkbox" data-change="quick" ${su.quick ? "checked" : ""}><span>${t("quickGame")}</span></label>
+        <label class="row"><input type="checkbox" data-change="quick" ${su.quick ? "checked" : ""}><span class="grow">${t("quickGame")}</span>${su.quick ? "" : `<button class="btn small" data-action="randomDecks">🎲 ${t("randomAll")}</button>`}</label>
         ${decks}${balanceWarnings(su).map((w) => `<p class="warn">⚖️ ${w}</p>`).join("")}</section>` : ""}
       <section class="two">
         <label class="field"><span>${t("startingLife")}</span><input type="number" inputmode="numeric" min="1" max="999" value="${su.startingLife}" data-change="startLife"></label>
@@ -366,7 +368,7 @@
         const src = game.setup.seats[j];
         const names = cmdNames(src);
         badges.push(
-          `<span class="badge cmd ${v >= Game.LETHAL_CMD ? "hot" : ""}" title="${esc(src.name)}: ${esc(names[idx] || "")}">${avatar(src)}⚔ ${v}${names.length > 1 ? `<sup>${idx + 1}</sup>` : ""}</span>`
+          `<span class="badge cmd ${v >= Game.LETHAL_CMD ? "hot" : ""}" title="${esc(src.name)}: ${esc(names[idx] || "")}">${cmdIcon(src, idx)}${v}</span>`
         );
       });
     p.tax.forEach((casts) => {
@@ -388,11 +390,13 @@
     return `<div class="tile ${i === st.active ? "active" : ""} ${p.out ? "out" : ""} ${p.lethal ? "lethal" : ""}" style="grid-row:${pos[0]};grid-column:${pos[1]}">
       <div class="tile-inner r${rot} ${S.settings.showArt && seat.art ? "has-art" : ""}" style="--c:${esc(seat.color)}${S.settings.showArt && seat.art ? `;--art:url('${esc(seat.art)}')` : ""}">
         <div class="life-wrap">
-          <button class="zone minus outer" data-life="-1" data-hold="step" data-seat="${i}" aria-label="−1"><span>−</span></button>
-          <button class="zone minus inner" data-life="-1" data-hold="edit" data-seat="${i}" aria-label="−1"></button>
-          <button class="zone plus inner" data-life="1" data-hold="edit" data-seat="${i}" aria-label="+1"></button>
-          <button class="zone plus outer" data-life="1" data-hold="step" data-seat="${i}" aria-label="+1"><span>+</span></button>
+          <button class="zone q tl" data-life="-1" data-hold="10" data-seat="${i}" aria-label="−1"><small>−10</small></button>
+          <button class="zone q bl" data-life="-1" data-hold="5" data-seat="${i}" aria-label="−1"><small>−5</small></button>
+          <button class="zone q tr" data-life="1" data-hold="10" data-seat="${i}" aria-label="+1"><small>+10</small></button>
+          <button class="zone q br" data-life="1" data-hold="5" data-seat="${i}" aria-label="+1"><small>+5</small></button>
+          <span class="sign minus">−</span><span class="sign plus">+</span>
           <div class="life">${p.life}${pend ? `<span class="pending">${fmtDelta(pend)}</span>` : ""}</div>
+          <button class="zone center" data-center data-seat="${i}" aria-label="${t("editLife")}"></button>
         </div>
         ${badges.length ? `<div class="tile-foot">${badges.join("")}</div>` : ""}
         <div class="tile-head">${avatar(seat)}<span class="who">${esc(seat.name)}</span>${deck}<button class="more" data-action="panel" data-seat="${i}" aria-label="${t("more")}">⋯</button></div>
@@ -428,7 +432,7 @@
     const cmdRows = seats
       .flatMap((s, j) =>
         cmdNames(s).map((name, idx) =>
-          stepRow(`${avatar(s)}<span>${esc(name)}${j === i ? ` <small>(${t("own")})</small>` : ""}</span>`, p.cmd[j + ":" + idx] || 0, `data-action="cmd" data-seat="${i}" data-from="${j}" data-idx="${idx}"`)
+          stepRow(`${cmdIcon(s, idx)}<span>${esc(name)} <small class="muted">${esc(s.name)}${j === i ? ` · ${t("own")}` : ""}</small></span>`, p.cmd[j + ":" + idx] || 0, `data-action="cmd" data-seat="${i}" data-from="${j}" data-idx="${idx}"`)
         )
       )
       .join("");
@@ -467,10 +471,10 @@
     </div>`;
   }
 
-  function hubHtml(st, rot) {
+  function hubHtml(st, rot, bar) {
     const a = game.setup.seats[st.active];
     const timer = S.settings.turnTimer ? `<span class="timer" id="turnTimer">${fmtClock(Date.now() - st.turnStartedAt)}</span>` : "";
-    return `<div class="hub r${rot}">
+    return `<div class="hub ${bar ? "bar" : "r" + rot}">
       <button class="hub-btn" data-action="undo" aria-label="${t("undo")}" ${game.events.some((e) => !e.reverted) || pending.size ? "" : "disabled"}>↶</button>
       <button class="hub-mid" data-action="nextTurn" style="--c:${esc(a.color)}"><span class="round">${t("roundN", { n: st.round })}${timer}</span><span class="act">${esc(a.name)}</span><span class="next">${t("nextTurn")} ▸</span></button>
       <button class="hub-btn" data-action="menu" aria-label="${t("menu")}">☰</button>
@@ -484,7 +488,7 @@
     // "Face me": every tile reads the right way up for whoever holds the device.
     const seatsPos = L.seats.map((pos) => (S.settings.faceMe ? [pos[0], pos[1], 0] : pos));
     const tiles = game.setup.seats.map((s, i) => tileHtml(s, i, st, seatsPos[i])).join("");
-    return `<div class="board ${S.settings.dimInactive ? "dim" : ""}" style="grid-template-rows:${L.rows};grid-template-columns:${L.cols}">${tiles}</div>${ui.panel == null ? hubHtml(st, seatsPos[st.active][2]) : ""}`;
+    return `<div class="board ${S.settings.dimInactive ? "dim" : ""} ${S.settings.faceMe ? "faceme" : ""}" style="grid-template-rows:${L.rows};grid-template-columns:${L.cols}">${tiles}</div>${ui.panel == null ? hubHtml(st, seatsPos[st.active][2], S.settings.faceMe) : ""}`;
   }
 
   function playersView() {
@@ -521,6 +525,7 @@
           <input class="emoji-in" value="${AVATARS.includes(p.avatar) ? "" : esc(p.avatar)}" maxlength="4" placeholder="Aa" data-change="pAvatarCustom" aria-label="${t("avatar")}"></div>
       </section>
       <section><h2>${t("decks")}</h2>
+        <div class="inline"><input value="${esc(p.moxfieldUser || "")}" placeholder="${t("moxUser")}" data-change="pMox" autocomplete="off" autocapitalize="off"><button class="btn" data-action="moxSyncHelp" data-id="${p.id}">🔄 ${t("syncFromMox")}</button></div>
         ${decks
           .map(
             (d) =>
@@ -549,6 +554,7 @@
       a.extraTurns.length ? item("info", t("ck_extraTurns", { n: a.extraTurns.length }), a.extraTurns) : "",
       a.combos.length ? item("info", t("ck_combos", { n: a.combos.length }), a.combos.map((c) => c.join(" + "))) : "",
       a.tutors.length ? item("info", t("ck_tutors", { n: a.tutors.length })) : "",
+      a.extra && a.extra.length ? item("info", t("ck_extra", { n: a.extra.length }), a.extra) : "",
     ].join("");
     return `<div class="check">
       <div class="check-head"><b>${t("estBracket", { n: a.estimate.bracket })}</b><button class="btn small" data-action="useEstimate">${t("useEstimate")}</button></div>
@@ -593,6 +599,9 @@
       ${d.importMsg ? `<p class="${d.importOk ? "okmsg" : "warn"}">${d.importMsg}</p>` : ""}
       <label class="field"><span>${t("commander")}</span><input id="dC1" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[0] || "")}" autocomplete="off" placeholder="${t("searchScryfall")}"></label>
       <label class="field"><span>${t("partner")}</span><input id="dC2" list="cmdList" data-scry data-change="cmdLookup" value="${esc(d.commanders[1] || "")}" autocomplete="off" placeholder="${t("optional")}"></label>
+      ${d.commanders.length ? `<div class="field"><span>${t("cmdIcons")} <small class="muted">${t("cmdIconsHint")}</small></span>${d.commanders
+        .map((name, k) => `<div class="icon-row">${cmdIcon(d, k, `<span class="cmd-icon emoji">⚔</span>`)}<span class="grow">${esc(name)}</span><input id="dIcon${k}" class="emoji-in" maxlength="4" value="${esc((d.cmdIcons || [])[k] || "")}" placeholder="🙂" aria-label="${t("cmdIcons")}"></div>`)
+        .join("")}</div>` : ""}
       <datalist id="cmdList"></datalist>
       ${d.warn ? `<p class="warn">${d.warn}</p>` : ""}
       <label class="field"><span>${t("deckName")}</span><input id="dName" value="${esc(d.name)}" maxlength="40" placeholder="${esc(d.commanders[0] || "")}" autocomplete="off"></label>
@@ -641,11 +650,109 @@
 
   // A deck handed over by the bookmarklet (#import=...) waits here until
   // someone says whose deck it is.
-  function takeFragment() {
-    const incoming = Decks.fromFragment(location.hash);
-    if (!location.hash.startsWith("#import=")) return;
+  // The bookmark opens the app at #receive and then posts the decks over.
+  let receiveTimer = null;
+  function awaitDecks() {
     history.replaceState(null, "", location.pathname + location.search);
-    if (!incoming) return toast(t("importFailed"));
+    if (ui.view === "game") ui.view = "home";
+    render();
+    openModal(`<h2>📥 ${t("waitingTitle")}</h2><p class="muted small">${t("waitingHint")}</p><div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button></div>`, "small");
+    clearTimeout(receiveTimer);
+    receiveTimer = setTimeout(() => {
+      if (!ui.sync && !ui.incoming) openModal(`<p class="confirm-text">${t("nothingArrived")}</p><div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`, "small");
+    }, 45000);
+  }
+
+  window.addEventListener("message", (e) => {
+    if (!/^https:\/\/(www\.)?moxfield\.com$/.test(e.origin) || !e.data || e.data.type !== "ct-decks") return;
+    try {
+      e.source.postMessage({ type: "ct-ack" }, e.origin);
+    } catch (err) {
+      /* the Moxfield tab is gone; the decks still arrived */
+    }
+    if (ui.sync || ui.incoming) return; // repeats of the same delivery
+    const got = Decks.fromSync(e.data.data);
+    clearTimeout(receiveTimer);
+    if (!got) return toast(t("importFailed"));
+    Usage.track("moxfield:receive:" + (got.decks.length > 1 ? "profile" : "deck"));
+    if (got.decks.length === 1 && !got.user) return offerIncoming(got.decks[0]);
+    openSync(got);
+  });
+
+  function openSync(got) {
+    const owner =
+      S.players.find((p) => !p.guest && got.user && (p.moxfieldUser || "").toLowerCase() === got.user.toLowerCase()) || S.players.find((p) => !p.guest) || null;
+    const remembered = owner && owner.moxfieldSelected;
+    ui.sync = {
+      user: got.user,
+      decks: got.decks,
+      ownerId: owner ? owner.id : "",
+      // Preselect the decks picked last time, or all of them on a first sync.
+      selected: new Set(got.decks.map((d, k) => k).filter((k) => !remembered || (got.decks[k].source && remembered.includes(got.decks[k].source.id)))),
+    };
+    syncModal();
+  }
+
+  function syncStatus(deck, ownerId) {
+    const existing = deck.source && S.decks.find((x) => x.ownerId === ownerId && x.source && x.source.id === deck.source.id);
+    if (!existing) return "new";
+    return existing.fp === Decks.fingerprint(deck.cards) ? "same" : "update";
+  }
+
+  function syncModal() {
+    const sy = ui.sync;
+    const rows = sy.decks
+      .map((d, k) => {
+        const st = sy.ownerId ? syncStatus(d, sy.ownerId) : "new";
+        return `<label class="row"><input type="checkbox" data-change="syncPick" data-k="${k}" ${sy.selected.has(k) ? "checked" : ""}><span class="grow"><b>${esc(d.name || d.commanders[0] || "?")}</b><small class="muted">${esc(d.commanders.join(" + "))}</small></span><span class="tag ${st}">${t("sync_" + st)}</span></label>`;
+      })
+      .join("");
+    openModal(
+      `<h2>📥 ${t("syncTitle", { n: sy.decks.length })}${sy.user ? ` <small class="muted">${esc(sy.user)}</small>` : ""}</h2>
+      <h3>${t("whoseDecks")}</h3><div class="chips">${S.players
+        .filter((p) => !p.guest)
+        .map((p) => `<button class="chip ${sy.ownerId === p.id ? "on" : ""}" data-action="syncOwner" data-id="${p.id}">${avatar(p)}${esc(p.name)}</button>`)
+        .join("")}<button class="chip" data-action="syncOwner" data-id="">+ ${t("addPlayer")}</button></div>
+      <div class="actions"><button class="btn small" data-action="syncAll" data-v="1">${t("selectAll")}</button><button class="btn small" data-action="syncAll" data-v="">${t("selectNone")}</button></div>
+      <div class="sync-list">${rows}</div>
+      <div class="actions"><button class="btn" data-action="syncCancel">${t("cancel")}</button><button class="btn primary" data-action="syncGo" ${sy.selected.size && sy.ownerId ? "" : "disabled"}>${t("syncN", { n: sy.selected.size })}</button></div>`
+    );
+  }
+
+  // Checks synced decks one after another in the background.
+  async function checkQueue(ids) {
+    for (let k = 0; k < ids.length; k++) {
+      const deck = Store.deck(ids[k]);
+      if (!deck) continue;
+      toast(`🔍 ${t("checkingN", { k: k + 1, n: ids.length })}`);
+      try {
+        const res = await checkDeckData(deck);
+        Object.assign(deck, { analysis: res.analysis, colors: deck.colors || res.colors, art: res.art, cmdArt: res.cmdArt });
+        Store.save();
+        if (ui.view === "player" && !$("#dName")) render();
+      } catch (e) {
+        toast(t("scryfallFailed"));
+        return;
+      }
+    }
+    toast(`✅ ${t("syncDone", { n: ids.length })}`);
+  }
+
+  function newPlayerFromSync(name) {
+    const used = S.players.map((p) => p.color);
+    const p = {
+      id: Store.uid(),
+      name: name || I18n.raw("newPlayer") + " " + (S.players.filter((x) => !x.guest).length + 1),
+      color: COLORS.find((c) => !used.includes(c)) || COLORS[random(COLORS.length)],
+      avatar: AVATARS[random(AVATARS.length)],
+      guest: false,
+    };
+    S.players.push(p);
+    Store.save();
+    return p;
+  }
+
+  function offerIncoming(incoming) {
     ui.incoming = incoming;
     if (ui.view === "game") ui.view = "home";
     render();
@@ -660,6 +767,16 @@
     );
   }
 
+  function takeFragment() {
+    if (location.hash === "#receive") return awaitDecks();
+    const incoming = Decks.fromFragment(location.hash);
+    if (!location.hash.startsWith("#import=")) return;
+    history.replaceState(null, "", location.pathname + location.search);
+    if (!incoming) return toast(t("importFailed"));
+    offerIncoming(incoming);
+  }
+
+
   function readDeckForm() {
     const d = ui.deck;
     if (!$("#dName")) return;
@@ -668,9 +785,39 @@
     d.name = v("#dName");
     d.list = $("#dList").value;
     d.moxUrl = v("#dMox");
+    if ($("#dIcon0") || $("#dIcon1")) d.cmdIcons = [v("#dIcon0"), v("#dIcon1")];
     d.bracket = v("#dBracket") ? Number(v("#dBracket")) : null;
     // A pasted list with a Commander section fills empty commander fields.
     if (!d.commanders.length && d.list) d.commanders = Decks.parseList(d.list).commanders.slice(0, 2);
+  }
+
+  // Looks a deck's cards up (local card data first, then Scryfall) and returns
+  // what the check needs; shared by the deck editor and Moxfield sync.
+  async function checkDeckData(d) {
+    const parsed = Decks.parseList(d.list);
+    const commanders = d.commanders.map(Decks.normalizeName);
+    const known = new Set((d.known || []).map(Decks.cardKey));
+    const names = parsed.cards.map((c) => c.n).concat(commanders).filter((n) => !known.has(Decks.cardKey(n)));
+    const { found, fetched } = await Decks.fetchCards(names, Store.cardCache);
+    const colors = d.colors || Decks.colorsOf(commanders, found);
+    let analysis = Decks.analyze(parsed.cards, commanders, colors, found, d.known);
+    if (analysis.notFound.length) {
+      const suggest = await Decks.suggest(analysis.notFound, Store.cardCache);
+      // A "suggestion" that is the same card spelled differently is a match.
+      let same = false;
+      for (const [n, sug] of Object.entries(suggest)) {
+        if (Decks.cardKey(sug.name) === Decks.cardKey(n)) {
+          found.set(Decks.cardKey(n), sug);
+          same = true;
+        }
+      }
+      if (same) analysis = Decks.analyze(parsed.cards, commanders, colors, found, d.known);
+      analysis.suggest = suggest;
+    }
+    if (fetched || analysis.notFound.length) Store.saveCards();
+    analysis.fp = Decks.fingerprint(parsed.cards);
+    const cmdArt = commanders.map((n) => (found.get(Decks.cardKey(n)) || {}).art || null);
+    return { commanders, colors, analysis, cmdArt, art: cmdArt[0] || d.art || null };
   }
 
   async function runCheck(d) {
@@ -679,17 +826,7 @@
     d.checking = true;
     deckModal();
     try {
-      d.commanders = d.commanders.map(Decks.normalizeName);
-      const known = new Set((d.known || []).map((n) => n.toLowerCase()));
-      const names = parsed.cards.map((c) => c.n).concat(d.commanders).filter((n) => !known.has(n.toLowerCase()));
-      const { found, fetched } = await Decks.fetchCards(names, Store.cardCache);
-      if (!d.colors) d.colors = Decks.colorsOf(d.commanders, found);
-      const lead = d.commanders[0] && found.get(d.commanders[0].toLowerCase());
-      if (lead && lead.art) d.art = lead.art;
-      d.analysis = Decks.analyze(parsed.cards, d.commanders, d.colors, found, d.known);
-      d.analysis.fp = Decks.fingerprint(parsed.cards);
-      if (d.analysis.notFound.length) d.analysis.suggest = await Decks.suggest(d.analysis.notFound, Store.cardCache);
-      if (fetched || d.analysis.notFound.length) Store.saveCards();
+      Object.assign(d, await checkDeckData(d));
     } catch (e) {
       toast(navigator.onLine ? t("scryfallFailed") : t("needOnline"));
     }
@@ -700,10 +837,20 @@
     }
   }
 
+  // Commander icon: the owner's chosen emoji, else the card's art, else the
+  // player's avatar. Works for a deck or a game seat (same fields).
+  function cmdIcon(holder, idx, fallback) {
+    const emoji = holder.cmdIcons && holder.cmdIcons[idx];
+    if (emoji) return `<span class="cmd-icon emoji">${esc(emoji)}</span>`;
+    const art = (holder.cmdArt && holder.cmdArt[idx]) || (idx === 0 ? holder.art : null);
+    if (art && S.settings.showArt) return `<span class="cmd-icon" style="background-image:url('${esc(art)}')"></span>`;
+    return fallback || avatar(holder);
+  }
+
   function fixNames(d, map) {
     for (const [from, to] of Object.entries(map)) {
       d.list = Decks.replaceName(d.list, from, to);
-      d.commanders = d.commanders.map((c) => (Decks.normalizeName(c).toLowerCase() === Decks.normalizeName(from).toLowerCase() ? to : c));
+      d.commanders = d.commanders.map((c) => (Decks.cardKey(c) === Decks.cardKey(from) ? to : c));
     }
     const n = Object.keys(map).length;
     if (n) toast(t("fixedN", { n }));
@@ -954,8 +1101,7 @@
         <label class="field"><span>${t("language")}</span><select data-change="lang"><option value="en" ${st.lang === "en" ? "selected" : ""}>English</option><option value="he" ${st.lang === "he" ? "selected" : ""}>עברית</option></select></label>
         <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
         ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}${toggle("faceMe")}${toggle("sound")}
-        <label class="field"><span>${t("holdStep")}</span><select data-change="holdStep">${[5, 10].map((n) => `<option value="${n}" ${Number(st.holdStep || 10) === n ? "selected" : ""}>±${n}</option>`).join("")}</select></label>
-        <p class="muted small">${t("holdStepHint")}</p>
+        <p class="muted small">${t("controlsHint")}</p>
       </section>
       <section><h2>⭐ ${t("oneTapTitle")}</h2>
         <p class="small">${t("oneTapIntro")}</p>
@@ -963,6 +1109,13 @@
         <textarea id="bmCode" rows="3" readonly hidden>${esc(Decks.bookmarklet(appUrl()))}</textarea>
         <ol class="small howto"><li>${t("oneTapDesktop")}</li><li>${t("oneTapMobile")}</li><li>${t("oneTapUse")}</li></ol>
         <p class="muted small">${t("oneTapIos")}</p>
+      </section>
+      <section><h2>📈 ${t("usageTitle")}</h2><p class="muted small">${t("usageHint", { date: fmtDate(Usage.since()), days: Usage.days() })}</p>
+        ${Usage.summary().length ? `<details><summary>${t("usageTop")}</summary><table class="usage">${Usage.summary()
+          .slice(0, 25)
+          .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`)
+          .join("")}</table></details>` : ""}
+        <div class="actions"><button class="btn" data-action="usageExport">⬇ ${t("usageExport")}</button><button class="btn" data-action="usageShare">📤 ${t("usageShare")}</button><button class="btn" data-action="usageClear">${t("usageClear")}</button></div>
       </section>
       <section><h2>${t("cardCache")}</h2><p class="muted small">${t("cardCacheHint", { n: Object.keys(Store.cardCache).length })}</p>
         <div class="actions"><button class="btn" data-action="clearCards" ${Object.keys(Store.cardCache).length ? "" : "disabled"}>${t("clearCache")}</button></div>
@@ -1005,6 +1158,7 @@
   }
 
   function go(view, params) {
+    Usage.track("view:" + view);
     ui.view = view;
     ui.params = params || {};
     ui.panel = null;
@@ -1082,7 +1236,7 @@
     const src = (v, label) => `<button class="chip ${source === v ? "on" : ""}" data-action="lifeSrc" data-v="${v == null ? "" : v}">${label}</button>`;
     openModal(
       `<h2>${avatar(seats[seat])} ${esc(seats[seat].name)} <small class="muted">${t("life")} ${life}</small></h2>
-      <div class="chips">${["lose", "gain", "set"].map((m) => `<button class="chip ${mode === m ? "on" : ""}" data-action="lifeMode" data-v="${m}">${t("mode_" + m)}</button>`).join("")}</div>
+      <div class="chips">${["set", "lose", "gain"].map((m) => `<button class="chip ${mode === m ? "on" : ""}" data-action="lifeMode" data-v="${m}">${t("mode_" + m)}</button>`).join("")}</div>
       <input id="lifeAmt" type="number" inputmode="numeric" min="0" max="999" value="${esc(amount)}" placeholder="${mode === "set" ? life : "0"}" autocomplete="off">
       ${mode === "set" ? "" : `<div class="chips">${[1, 2, 3, 5, 7, 10, 20].map((n) => `<button class="chip" data-action="lifeAmt" data-v="${n}">${n}</button>`).join("")}</div>`}
       ${losing ? `<h3>${t("fromWhom")}</h3><div class="chips">${others.map((j) => src(j, avatar(seats[j]) + esc(seats[j].name))).join("")}${src(seat, "🩸 " + t("paidLife"))}${src(null, t("unknown"))}</div>` : ""}
@@ -1093,6 +1247,7 @@
     const input = $("#lifeAmt");
     if (input) {
       input.focus();
+      input.select();
       input.addEventListener("input", () => {
         const v = parseInt(input.value, 10);
         const next = !Number.isFinite(v) ? null : ui.edit.mode === "set" ? v : ui.edit.mode === "gain" ? life + v : life - v;
@@ -1112,7 +1267,7 @@
   function openLifeEditor(seat) {
     flushAll();
     const others = liveState().alive.filter((x) => x !== seat);
-    ui.edit = { seat, mode: "lose", amount: "", source: others.length === 1 ? others[0] : null };
+    ui.edit = { seat, mode: "set", amount: String(liveState().players[seat].life), source: others.length === 1 ? others[0] : null };
     render();
     lifeEditor();
   }
@@ -1186,6 +1341,7 @@
     closeModal: () => {
       closeModal();
       ui.end = null;
+      ui.incoming = null;
     },
     confirmYes: () => {
       const cb = confirmCb;
@@ -1213,6 +1369,11 @@
       ui.swapPick = null;
       render();
     },
+    randomDecks: () => {
+      for (const s of ui.setup.seats) if (Store.decksOf(s.playerId).length > 1) s.deckId = "__random";
+      else if (Store.decksOf(s.playerId).length === 1) s.deckId = Store.decksOf(s.playerId)[0].id;
+      render();
+    },
     seatTap: (el) => {
       const i = Number(el.dataset.seat);
       if (ui.swapPick == null) ui.swapPick = i;
@@ -1227,9 +1388,15 @@
       const su = ui.setup;
       const n = su.seats.length;
       if (n < Game.MIN_PLAYERS) return;
+      Usage.track("game:start:" + n + "p");
       const seats = su.seats.map((s) => {
         const p = Store.player(s.playerId);
-        const d = su.quick ? null : Store.deck(s.deckId);
+        let deckId = s.deckId;
+        if (deckId === "__random") {
+          const mine = Store.decksOf(p.id);
+          deckId = mine.length ? mine[random(mine.length)].id : "";
+        }
+        const d = su.quick ? null : Store.deck(deckId);
         return {
           playerId: p.id,
           name: p.name,
@@ -1240,6 +1407,8 @@
           deckVersion: d && d.version ? d.version : null,
           commanders: d ? d.commanders.filter(Boolean) : [],
           art: d && d.art ? d.art : null,
+          cmdArt: d && d.cmdArt ? d.cmdArt : [],
+          cmdIcons: d && d.cmdIcons ? d.cmdIcons : [],
         };
       });
       const firstSeat = su.first === "random" ? random(n) : Number(su.first);
@@ -1255,6 +1424,7 @@
     attrib: (el) => {
       if (!ui.attrib) return;
       const v = el.dataset.src === "" ? null : Number(el.dataset.src);
+      Usage.track("attrib:" + (v == null ? "unknown" : v === ui.attrib.seat ? "paid" : "player") + (ui.attrib.key ? ":early" : ":late"));
       if (ui.attrib.key) {
         const p = pending.get(ui.attrib.key);
         if (p) {
@@ -1294,6 +1464,8 @@
     lifeMode: (el) => {
       readLifeEditor();
       ui.edit.mode = el.dataset.v;
+      if (el.dataset.v === "set" && !ui.edit.amount) ui.edit.amount = String(liveState().players[ui.edit.seat].life);
+      else if (el.dataset.v !== "set" && ui.edit.amount === String(liveState().players[ui.edit.seat].life)) ui.edit.amount = "";
       lifeEditor();
     },
     lifeAmt: (el) => {
@@ -1313,6 +1485,7 @@
       if (!Number.isFinite(amt) || amt < 0) return toast(t("enterNumber"));
       const life = liveState().players[seat].life;
       const delta = mode === "set" ? amt - life : mode === "gain" ? amt : -amt;
+      Usage.track("life:editor:" + mode);
       closeModal();
       if (!delta) return;
       dispatch(delta < 0 ? { type: "life", seat, delta, source } : { type: "life", seat, delta, source: null });
@@ -1448,6 +1621,7 @@
     endSave: () => {
       flushAll();
       const match = Game.buildMatch(game, { winnerSeat: ui.end.winner, winType: ui.end.winType });
+      Usage.track("game:end:" + match.winType);
       S.matches.push(match);
       Store.save();
       game = null;
@@ -1625,6 +1799,62 @@
       const name = (d.name || commanders[0] || "deck").replace(/[\\/:*?"<>|]+/g, " ").trim();
       download(name + ".txt", Decks.toText(cards, commanders) + "\n");
     },
+    syncOwner: (el) => {
+      ui.sync.ownerId = el.dataset.id || newPlayerFromSync(ui.sync.user).id;
+      syncModal();
+    },
+    syncAll: (el) => {
+      ui.sync.selected = new Set(el.dataset.v ? ui.sync.decks.map((d, k) => k) : []);
+      syncModal();
+    },
+    syncCancel: () => {
+      ui.sync = null;
+      closeModal();
+    },
+    syncGo: () => {
+      const sy = ui.sync;
+      const owner = Store.player(sy.ownerId);
+      if (!owner) return;
+      if (sy.user) owner.moxfieldUser = sy.user;
+      owner.moxfieldSelected = [...sy.selected].map((k) => sy.decks[k].source && sy.decks[k].source.id).filter(Boolean);
+      const touched = [];
+      for (const k of sy.selected) {
+        const inc = sy.decks[k];
+        const list = Decks.toText(inc.cards, inc.commanders);
+        const fp = Decks.fingerprint(Decks.parseList(list).cards);
+        let deck = inc.source && S.decks.find((x) => x.ownerId === owner.id && x.source && x.source.id === inc.source.id);
+        if (deck && deck.fp === fp) continue;
+        if (!deck) {
+          deck = { id: Store.uid(), ownerId: owner.id, name: inc.name || inc.commanders.join(" + "), colors: "", bracket: null, versions: [], version: 0, known: [], cmdIcons: [], cmdArt: [] };
+          S.decks.push(deck);
+        }
+        deck.version = deck.fp ? (deck.version || 1) + 1 : 1;
+        deck.versions = [...(deck.versions || []), { v: deck.version, at: Date.now(), list }].slice(-20);
+        Object.assign(deck, { list, fp, commanders: inc.commanders.slice(0, 2), source: inc.source, analysis: null });
+        touched.push(deck.id);
+      }
+      Store.save();
+      ui.sync = null;
+      Usage.track("moxfield:sync", touched.length);
+      go("player", { id: owner.id });
+      toast(touched.length ? t("syncedN", { n: touched.length }) : t("syncNothing"));
+      if (touched.length) checkQueue(touched);
+    },
+    moxSyncHelp: (el) => {
+      const p = Store.player(el.dataset.id);
+      const user = (p && p.moxfieldUser) || "";
+      openModal(
+        `<h2>🔄 ${t("syncFromMox")}</h2>
+        <ol class="howto">
+          <li>${user ? `<a class="btn small" href="https://moxfield.com/users/${encodeURIComponent(user)}" target="_blank" rel="noopener">${t("openProfile", { user })} ↗</a>` : t("openProfileGeneric")}</li>
+          <li>${t("tapBookmark")}</li>
+          <li>${t("pickDecksHere")}</li>
+        </ol>
+        <p class="muted small">${t("noBookmarkYet")} <button class="linkish" data-action="nav" data-to="settings">${t("settings")} ›</button></p>
+        <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`,
+        "small"
+      );
+    },
     incomingFor: (el) => {
       const inc = ui.incoming;
       if (!inc) return closeModal();
@@ -1676,6 +1906,28 @@
         toast(t("copyManually"));
       }
     },
+    usageExport: () => download(`commander-tracker-usage-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(Usage.exportData(), null, 1), "application/json"),
+    usageShare: async () => {
+      const text = `${I18n.raw("appName")} usage since ${new Date(Usage.since()).toISOString().slice(0, 10)}\n` + Usage.summary().map(([k, v]) => `${k}: ${v}`).join("\n");
+      try {
+        if (navigator.share) await navigator.share({ text });
+        else {
+          await navigator.clipboard.writeText(text);
+          toast(t("copied"));
+        }
+      } catch (e) {
+        /* share sheet closed */
+      }
+    },
+    usageClear: () =>
+      confirmModal(
+        t("confirmUsageClear"),
+        () => {
+          Usage.clear();
+          render();
+        },
+        t("usageClear")
+      ),
     clearCards: () =>
       confirmModal(
         t("confirmClearCards"),
@@ -1726,6 +1978,8 @@
         analysis: d.analysis || null,
         source: d.source || null,
         known: d.known || [],
+        cmdIcons: (d.cmdIcons || []).slice(0, 2),
+        cmdArt: d.cmdArt || [],
       };
       const idx = S.decks.findIndex((x) => x.id === deck.id);
       if (idx >= 0) S.decks[idx] = deck;
@@ -1888,6 +2142,17 @@
       Store.save();
       render();
     },
+    syncPick: (el) => {
+      const k = Number(el.dataset.k);
+      if (el.checked) ui.sync.selected.add(k);
+      else ui.sync.selected.delete(k);
+      syncModal();
+    },
+    pMox: (el) => {
+      Store.player(ui.params.id).moxfieldUser = el.value.trim().replace(/^.*moxfield\.com\/users\//i, "").replace(/[\/?#].*$/, "");
+      Store.save();
+      render();
+    },
     pAvatarCustom: (el) => {
       const v = el.value.trim();
       if (!v) return;
@@ -1910,6 +2175,10 @@
       });
       d.colors = MANA.filter((m) => found.some((c) => c.ci.includes(m))).join("");
       d.art = found[0].art || d.art;
+      d.cmdArt = d.commanders.map((n) => {
+        const c = found.find((x) => Decks.cardKey(x.name) === Decks.cardKey(n));
+        return c ? c.art : null;
+      });
       const banned = found.filter((c) => c.legal === "banned").map((c) => c.name);
       const notCmd = found.filter((c) => !c.canLead).map((c) => c.name);
       d.warn = [banned.length ? t("bannedWarn", { names: banned.join(", ") }) : "", notCmd.length ? t("notCommanderWarn", { names: notCmd.join(", ") }) : ""].filter(Boolean).join(" ");
@@ -1928,10 +2197,6 @@
       S.settings.lang = el.value;
       Store.save();
       render();
-    },
-    holdStep: (el) => {
-      S.settings.holdStep = Number(el.value);
-      Store.save();
     },
     defaultLife: (el) => {
       S.settings.startingLife = clampLife(el.value);
@@ -2080,16 +2345,21 @@
     const fn = A[el.dataset.action];
     if (!fn) return;
     e.preventDefault();
+    if (el.dataset.action !== "nav") Usage.track("tap:" + el.dataset.action);
     fn(el, e);
   });
   document.addEventListener("change", (e) => {
     const el = e.target.closest("[data-change]");
-    if (el && C[el.dataset.change]) C[el.dataset.change](el);
+    if (el && C[el.dataset.change]) {
+      Usage.track("set:" + (el.dataset.key || el.dataset.change));
+      C[el.dataset.change](el);
+    }
   });
   document.addEventListener("submit", (e) => {
     const form = e.target.closest("[data-submit]");
     if (!form) return;
     e.preventDefault();
+    Usage.track("form:" + form.dataset.submit);
     F[form.dataset.submit](form);
   });
   document.addEventListener("input", (e) => {
@@ -2099,10 +2369,13 @@
     if (q.length >= 2) acTimer = setTimeout(() => autocomplete(q), 250);
   });
 
-  // Life taps respond on pointerdown with ±1. Holding the outer part of a tile
-  // jumps by the long-press step (10 by default) and repeats; holding next to
-  // the number opens the life editor instead.
+  // Each tile is split into four corners and a center, as its player sees it.
+  // Corners: tap ±1; hold a top corner for ±10, a bottom corner for ±5, and
+  // keep holding to repeat. Center (the number): tap to edit, drag up or down
+  // to count up or down.
   let hold = null;
+  let swipe = null;
+  const SWIPE_PX = 22;
   function stopHold() {
     if (hold) clearTimeout(hold.timer);
     hold = null;
@@ -2116,6 +2389,16 @@
     if (navigator.vibrate) navigator.vibrate(15);
   }
   app.addEventListener("pointerdown", (e) => {
+    const center = e.target.closest("[data-center]");
+    if (center) {
+      e.preventDefault();
+      const seat = Number(center.dataset.seat);
+      if (liveState().players[seat].out) return;
+      const inner = center.closest(".tile-inner");
+      const rot = Number((inner.className.match(/\br(\d+)\b/) || [0, 0])[1]);
+      swipe = { seat, x0: e.clientX, y0: e.clientY, rad: (rot * Math.PI) / 180, steps: 0, moved: false };
+      return;
+    }
     const zone = e.target.closest("[data-life]");
     if (!zone) return;
     e.preventDefault();
@@ -2123,16 +2406,12 @@
     const seat = Number(zone.dataset.seat);
     const d = Number(zone.dataset.life);
     if (!lifeTap(seat, d)) return;
-    const step = Number(S.settings.holdStep) || 10;
+    Usage.track("life:tap");
+    const step = Number(zone.dataset.hold) || 10;
     hold = {
       timer: setTimeout(() => {
         buzz();
-        if (zone.dataset.hold === "edit") {
-          lifeTap(seat, -d); // take back the tap that started the press
-          stopHold();
-          openLifeEditor(seat);
-          return;
-        }
+        Usage.track("life:hold" + step);
         lifeTap(seat, d * (step - 1)); // the first tap already counted 1
         const repeat = () => {
           if (!hold) return;
@@ -2143,6 +2422,33 @@
         if (hold) hold.timer = setTimeout(repeat, 650);
       }, 450),
     };
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!swipe) return;
+    // Distance moved toward the top of the tile as its player sees it.
+    const dx = e.clientX - swipe.x0;
+    const dy = e.clientY - swipe.y0;
+    const up = dx * Math.sin(swipe.rad) - dy * Math.cos(swipe.rad);
+    if (Math.abs(up) > 8 || Math.hypot(dx, dy) > 12) swipe.moved = true;
+    const steps = Math.trunc(up / SWIPE_PX);
+    if (steps !== swipe.steps) {
+      if (!swipe.counted) Usage.track("life:swipe");
+      swipe.counted = true;
+      lifeTap(swipe.seat, steps - swipe.steps);
+      swipe.steps = steps;
+    }
+  });
+  window.addEventListener("pointerup", () => {
+    if (!swipe) return;
+    const { seat, moved } = swipe;
+    swipe = null;
+    if (!moved) {
+      Usage.track("life:editor");
+      openLifeEditor(seat);
+    }
+  });
+  window.addEventListener("pointercancel", () => {
+    swipe = null;
   });
   window.addEventListener("pointerup", stopHold);
   window.addEventListener("pointercancel", stopHold);

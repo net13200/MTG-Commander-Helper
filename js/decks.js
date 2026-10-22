@@ -29,7 +29,6 @@
     return String(name || "")
       .replace(/[\u2018\u2019\u02BC\u0060\u00B4]/g, "'")
       .replace(/[\u201C\u201D]/g, '"')
-      .replace(/[\u2013\u2014]/g, "-")
       .replace(/^A-(?=[A-Z])/, "")
       .replace(/\s*\/{1,2}\s*/g, " // ")
       .replace(/\s+/g, " ")
@@ -66,15 +65,23 @@
     return { cards: [...byName.values()], commanders };
   }
 
+  // The key cards are matched by everywhere (lookups, cache, combos), so
+  // cosmetic differences such as hyphen styles or case never cause a miss.
+  function cardKey(name) {
+    return normalizeName(name)
+      .toLowerCase()
+      .replace(/[\u2010-\u2015\u2212]/g, "-");
+  }
+
   // Swaps one card name for another in a decklist, keeping each line's count.
   function replaceName(text, from, to) {
-    const target = normalizeName(from).toLowerCase();
+    const target = cardKey(from);
     return String(text || "")
       .split(/\r?\n/)
       .map((line) => {
         const m = line.trim().match(/^(\d+\s*x?\s+)?(.+)$/i);
         if (!m) return line;
-        return normalizeName(cleanName(m[2])).toLowerCase() === target ? (m[1] || "") + to : line;
+        return cardKey(cleanName(m[2])) === target ? (m[1] || "") + to : line;
       })
       .join("\n");
   }
@@ -139,28 +146,43 @@
   }
 
   // A bookmarklet runs on moxfield.com itself, where Moxfield's own API is
-  // allowed, and hands the deck to the app in the URL fragment (#import=...).
-  // The fragment never reaches a server.
+  // allowed. On a deck page it sends that deck; on a profile page
+  // (moxfield.com/users/<name>) it sends all of that user's public decks. It
+  // opens the app in a new tab right away and hands the decks over with
+  // postMessage once fetched; if the tab can't open, a single deck goes in
+  // the URL fragment instead (#import=..., never sent to a server).
   function bookmarklet(appUrl) {
-    const code = String.raw`(async()=>{const m=location.pathname.match(/\/decks\/([\w-]+)/);if(!location.hostname.endsWith("moxfield.com")||!m){alert("Open a deck on moxfield.com first, then tap this bookmark.");return}const u="https://api2.moxfield.com/v3/decks/all/"+m[1];let d;for(const c of ["omit","include"]){try{const r=await fetch(u,{credentials:c});if(r.ok){d=await r.json();break}}catch(e){}}if(!d){alert("Moxfield didn't return the deck. Use More > Export > Copy plain text and paste it in Commander Tracker instead.");return}const b=d.boards||{};const g=n=>Object.values((b[n]&&b[n].cards)||d[n]||{}).map(e=>[e.quantity||1,(e.card&&e.card.name)||e.name]);location.href=${JSON.stringify(appUrl)}+"#import="+encodeURIComponent(JSON.stringify({v:1,id:m[1],n:d.name||"",c:g("commanders"),m:g("mainboard")}))})()`;
+    const code = String.raw`(async()=>{const A=${JSON.stringify(appUrl)},O=new URL(A).origin,S=t=>new Promise(r=>setTimeout(r,t));if(!location.hostname.endsWith("moxfield.com")){alert("Open a deck or your profile on moxfield.com first, then tap this bookmark.");return}const dm=location.pathname.match(/\/decks\/([\w-]+)/),um=location.pathname.match(/\/users\/([^\/?#]+)/);if(!dm&&!um){alert("Open a deck or your profile on moxfield.com first, then tap this bookmark.");return}const w=window.open(A+"#receive","_blank");const get=async u=>{for(const c of["omit","include"]){try{const r=await fetch(u,{credentials:c});if(r.ok)return await r.json()}catch(e){}}return null};const deck=async id=>{const d=await get("https://api2.moxfield.com/v3/decks/all/"+id);if(!d)return null;const b=d.boards||{};const g=n=>Object.values((b[n]&&b[n].cards)||d[n]||{}).map(e=>[e.quantity||1,(e.card&&e.card.name)||e.name]);return{id,n:d.name||"",c:g("commanders"),m:g("mainboard")}};let ids=[],user=null;if(dm)ids=[dm[1]];else{user=decodeURIComponent(um[1]);const l=await get("https://api2.moxfield.com/v2/users/"+encodeURIComponent(user)+"/decks?pageNumber=1&pageSize=100");if(l&&Array.isArray(l.data))ids=l.data.map(x=>x.publicId).filter(Boolean);if(!ids.length)ids=[...new Set([...document.querySelectorAll('a[href*="/decks/"]')].map(a=>(a.getAttribute("href").match(/\/decks\/([\w-]+)/)||[])[1]).filter(x=>x&&!/^(public|personal|following|liked|search|bookmarks)$/.test(x)))]}if(!ids.length){alert("No public decks found here.");if(w)w.close();return}const decks=[];for(const id of ids.slice(0,60)){const d=await deck(id);if(d)decks.push(d);await S(150)}if(!decks.length){alert("Moxfield didn't return the decks. Use More > Export > Copy plain text and paste it in Commander Tracker instead.");if(w)w.close();return}if(!w){const x=decks[0];location.href=A+"#import="+encodeURIComponent(JSON.stringify({v:1,id:x.id,n:x.n,c:x.c,m:x.m}));return}let ok=false;addEventListener("message",e=>{if(e.origin===O&&e.data&&e.data.type==="ct-ack")ok=true});for(let i=0;i<80&&!ok;i++){try{w.postMessage({type:"ct-decks",data:{v:2,user,decks}},O)}catch(e){}await S(500)}if(!ok)alert("Commander Tracker didn't answer. Check the new tab.")})()`;
     return "javascript:" + encodeURIComponent(code).replace(/%2F/g, "/").replace(/%3A/g, ":");
   }
 
-  // Reads the #import= payload the bookmarklet sends.
+  function deckFromPayload(p) {
+    if (!p || typeof p !== "object") return null;
+    const toCards = (list) => (Array.isArray(list) ? list : []).filter((e) => Array.isArray(e) && e[1]).map(([q, n]) => ({ q: Number(q) || 1, n: String(n).slice(0, 200) }));
+    const commanders = toCards(p.c);
+    const cards = [...commanders, ...toCards(p.m)];
+    if (!cards.length) return null;
+    const id = typeof p.id === "string" && /^[\w-]+$/.test(p.id) ? p.id : null;
+    return { name: String(p.n || "").slice(0, 80), commanders: commanders.map((c) => c.n), cards, source: id ? { type: "moxfield", id, url: "https://moxfield.com/decks/" + id } : null };
+  }
+
+  // Reads the #import= payload of a single deck.
   function fromFragment(hash) {
     const m = String(hash || "").match(/^#import=(.+)$/);
     if (!m) return null;
     try {
-      const p = JSON.parse(decodeURIComponent(m[1]));
-      const toCards = (list) => (Array.isArray(list) ? list : []).filter((e) => Array.isArray(e) && e[1]).map(([q, n]) => ({ q: Number(q) || 1, n: String(n) }));
-      const commanders = toCards(p.c);
-      const cards = [...commanders, ...toCards(p.m)];
-      if (!cards.length) return null;
-      const id = typeof p.id === "string" && /^[\w-]+$/.test(p.id) ? p.id : null;
-      return { name: String(p.n || ""), commanders: commanders.map((c) => c.n), cards, source: id ? { type: "moxfield", id, url: "https://moxfield.com/decks/" + id } : null };
+      return deckFromPayload(JSON.parse(decodeURIComponent(m[1])));
     } catch (e) {
       return null;
     }
+  }
+
+  // Reads the postMessage payload: { v: 2, user, decks: [...] }.
+  function fromSync(data) {
+    if (!data || !Array.isArray(data.decks)) return null;
+    const decks = data.decks.slice(0, 100).map(deckFromPayload).filter(Boolean);
+    if (!decks.length) return null;
+    return { user: typeof data.user === "string" ? data.user.slice(0, 60) : null, decks };
   }
 
   // ---------- Scryfall ----------
@@ -191,8 +213,8 @@
     const notFound = [];
     const missing = [];
     for (const n of unique) {
-      const hit = cache[n.toLowerCase()];
-      if (hit) found.set(n.toLowerCase(), hit);
+      const hit = cache[cardKey(n)];
+      if (hit) found.set(cardKey(n), hit);
       else missing.push(n);
     }
     for (let i = 0; i < missing.length; i += 75) {
@@ -208,8 +230,8 @@
       for (const c of j.data || []) {
         const s = summarize(c);
         for (const key of [c.name, ...(c.card_faces || []).map((f) => f.name)]) {
-          found.set(key.toLowerCase(), s);
-          cache[key.toLowerCase()] = s;
+          found.set(cardKey(key), s);
+          cache[cardKey(key)] = s;
         }
       }
       for (const nf of j.not_found || []) if (nf.name) notFound.push(nf.name);
@@ -229,7 +251,7 @@
         const c = await r.json();
         const s = summarize(c);
         out[name] = s;
-        if (cache) for (const key of [c.name, ...(c.card_faces || []).map((f) => f.name)]) cache[key.toLowerCase()] = s;
+        if (cache) for (const key of [c.name, ...(c.card_faces || []).map((f) => f.name)]) cache[cardKey(key)] = s;
       } catch (e) {
         break; // offline: no suggestions this time
       }
@@ -313,8 +335,12 @@
   ];
 
   function lower(list) {
-    return new Set(list.map((n) => n.toLowerCase()));
+    return new Set(list.map(cardKey));
   }
+
+  // Planechase planes, Archenemy schemes and similar travel with some exports
+  // but aren't part of the 100 cards, so they're listed apart and not judged.
+  const NOT_IN_DECK = /\b(Plane|Phenomenon|Scheme|Attraction|Contraption|Stickers?|Dungeon)\b/;
 
   // cards: [{q, n}]; lookup: Map(lowercase name -> summary); colors: "WUBRG" subset or "".
   // known: names the owner chose to keep as they are (custom or proxy cards).
@@ -322,23 +348,27 @@
     const has = lower(cards.map((c) => c.n).concat(commanders || []));
     const deckCi = colors ? colors.split("") : null;
     const keep = lower(known || []);
-    const out = { total: 0, notFound: [], custom: [], banned: [], offColor: [], gameChangers: [], mld: [], extraTurns: [], tutors: [], combos: [] };
+    const out = { total: 0, extra: [], notFound: [], custom: [], banned: [], offColor: [], gameChangers: [], mld: [], extraTurns: [], tutors: [], combos: [] };
     const mldNames = lower(MLD);
     for (const { q, n } of cards) {
+      const c = lookup.get(cardKey(n));
+      if (c && NOT_IN_DECK.test(c.type)) {
+        out.extra.push(c.name);
+        continue;
+      }
       out.total += q;
-      const c = lookup.get(n.toLowerCase());
       if (!c) {
-        (keep.has(n.toLowerCase()) ? out.custom : out.notFound).push(n);
+        (keep.has(cardKey(n)) ? out.custom : out.notFound).push(n);
         continue;
       }
       if (c.legal === "banned" || c.legal === "not_legal") out.banned.push(c.name);
       if (deckCi && c.ci.some((x) => !deckCi.includes(x))) out.offColor.push(c.name);
       if (c.gc) out.gameChangers.push(c.name);
-      if (mldNames.has(c.name.toLowerCase()) || MLD_TEXT.test(c.text)) out.mld.push(c.name);
+      if (mldNames.has(cardKey(c.name)) || MLD_TEXT.test(c.text)) out.mld.push(c.name);
       if (EXTRA_TURN.test(c.text)) out.extraTurns.push(c.name);
       if (TUTOR.test(c.text)) out.tutors.push(c.name);
     }
-    for (const [a, b] of COMBOS) if (has.has(a.toLowerCase()) && has.has(b.toLowerCase())) out.combos.push([a, b]);
+    for (const [a, b] of COMBOS) if (has.has(cardKey(a)) && has.has(cardKey(b))) out.combos.push([a, b]);
     out.estimate = estimate(out);
     out.at = Date.now();
     return out;
@@ -368,12 +398,12 @@
   function colorsOf(names, lookup) {
     const all = new Set();
     for (const n of names) {
-      const c = lookup.get(n.toLowerCase());
+      const c = lookup.get(cardKey(n));
       if (c) c.ci.forEach((x) => all.add(x));
     }
     return ["W", "U", "B", "R", "G"].filter((x) => all.has(x)).join("");
   }
 
-  CT.Decks = { parseList, normalizeName, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
+  CT.Decks = { parseList, normalizeName, cardKey, fromSync, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
   if (typeof module !== "undefined") module.exports = CT.Decks;
 })(typeof window !== "undefined" ? window : globalThis);

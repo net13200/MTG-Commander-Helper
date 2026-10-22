@@ -14,14 +14,14 @@ Opening `index.html` directly also works, but offline install needs it served ov
 
 ## What's in the MVP
 
-- **Tracker for 2–6 players**: tiles face each seat (portrait and landscape layouts), or all face the person holding the device ("face me"). Tap for ±1; hold the outer part of a tile for ±10 (or ±5, in Settings); hold next to the life total to type an amount or set it exactly. Changes batch into one log entry after 1.5 s.
+- **Tracker for 2–6 players**: tiles face each seat (portrait and landscape layouts), or all face the person holding the device ("face me", with the turn bar at the bottom). Each tile has four corners and a center, as its player sees it: tap a corner for ±1, hold a top corner for ±10 or a bottom corner for ±5 (holding repeats); tap the life total to type or set it, or drag it up or down to count. Changes batch into one log entry after 1.5 s.
 - **Commander damage** per source commander (Partner/Background get two), entered once and applied to life too; your own commander counts. Each commander gets its own badge on the tile. If someone else controls a commander, "Dealt by" credits the damage and the knockout to them while 21 still counts per commander. 21 from one commander, 10 poison or 0 life flags the player and offers to eliminate them, unless they have "can't lose".
 - **Poison, Monarch, the Initiative, commander tax** (+2 per cast), custom counters (energy, experience, rad, anything; a custom counter added for one player is offered to everyone and remembered for later games), "can't lose" / "can't win".
 - **Turns**: random or chosen first player, active-player marker, round counter, optional turn timer, dim-between-turns.
 - **Attribution**: as soon as life drops, a "from whom?" strip appears on that tile; one tap, never blocking. "Paid" marks life paid as a cost, which doesn't count as damage. In 1v1 the opponent is preselected.
 - **Action log with undo**: multi-step undo, and tapping any log entry reverts or restores it. Notes with quick tags.
 - **Eliminations** record who knocked whom out and how (combat, commander damage, poison, alt-win, concede).
-- **Players and decks**: persistent profiles (name, color, avatar), guests by name that can be merged into a profile later, decks with commander(s), color identity, bracket and decklist. Commander search and color identity come from Scryfall when online.
+- **Players and decks**: persistent profiles (name, color, avatar), guests by name that can be merged into a profile later, decks with commander(s), color identity, bracket and decklist. Commander search and color identity come from Scryfall when online. Decks can be picked at random at setup. Each commander shows its card art as its icon, or an emoji chosen in the deck.
 - **Match history**: saved automatically at game end with seats, decks, first player, rounds, duration, full damage matrix, eliminations, winner and win type, notes and the log. Games played without the tracker can be logged afterward.
 - **Stats**: win rate per player and per deck, wins by turn order and by seat, average rounds and minutes, most damage dealt and most knockouts.
 - **Never lose a game**: state is saved after every action, so a reload or crash resumes mid-game. Keep-awake is on by default.
@@ -43,9 +43,13 @@ Opening `index.html` directly also works, but offline install needs it served ov
 Moxfield has no official public API and doesn't let other sites read its decks, so the app can't fetch a deck by link on its own. There are two ways in, both without any proxy or server:
 
 - **Paste from clipboard**: paste the deck link and tap Import. The app opens the deck on Moxfield; there, tap **More → Export → Copy plain text**, come back and tap **Paste from clipboard**.
-- **One-tap bookmark**: in **Settings → One-tap Moxfield import**, add the "Send to Commander Tracker" bookmark (drag it to the bookmarks bar, or copy its code into a bookmark on a phone). On a Moxfield deck page, tap it: it reads the deck on Moxfield's own page and opens it in the app through the URL fragment (`#import=…`), which never reaches a server. On iPhone/iPad it opens in Safari, which keeps its data apart from the Home Screen app, so use the clipboard there.
+- **One-tap bookmark and profile sync**: in **Settings → One-tap Moxfield import**, add the "Send to Commander Tracker" bookmark (drag it to the bookmarks bar, or copy its code into a bookmark on a phone). Tapped on a Moxfield deck page it sends that deck; tapped on a profile page (`moxfield.com/users/<name>`) it sends all of that user's public decks, and the app lists them to tick and sync, remembering the picks for next time ("Sync from Moxfield" on a player's page walks through it). The bookmark reads the decks on Moxfield's own page and hands them to the app in a new tab with `postMessage`, so nothing goes through a server. On iPhone/iPad it opens in Safari, which keeps its data apart from the Home Screen app, so use the clipboard there.
 
 Everything is saved on the device: decks, games and the Scryfall card data used by deck checks (so checks work offline). Each deck can also be saved as a `.txt` decklist.
+
+## Usage log
+
+Settings → Usage log counts which features get used (life taps vs. holds vs. swipes, attribution answers, screens, Moxfield use…), only on the device. Export or share it to plan the next version; see [ROADMAP.md](ROADMAP.md).
 
 ## Not yet (later phases in the PRD)
 
@@ -61,6 +65,8 @@ Everything is saved on the device: decks, games and the Scryfall card data used 
 | `js/stats.js` | Stats, rivalries and seasons from saved matches. |
 | `js/decks.js` | Decklist parsing, Moxfield import, Scryfall lookups, deck check and bracket estimate. |
 | `js/recap.js` | Game recap writer. |
+| `js/sound.js` | Synthesized "ouch" for commander damage. |
+| `js/usage.js` | Local usage log. |
 | `js/store.js` | localStorage persistence (playgroup data and the live game kept separately). |
 | `js/i18n.js` | English and Hebrew strings. |
 | `js/app.js` | UI: views, the game board, modals. |

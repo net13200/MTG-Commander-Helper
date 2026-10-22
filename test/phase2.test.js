@@ -198,3 +198,26 @@ test("suggestions come from Scryfall's fuzzy search and are cached", async () =>
   assert.ok(cache["sol ring"]);
   delete global.fetch;
 });
+
+test("card keys ignore hyphen styles, so a 'fix' can't loop", () => {
+  assert.equal(Decks.cardKey("Human–Time Lord Meta-Crisis"), Decks.cardKey("Human-Time Lord Meta-Crisis"));
+  assert.equal(Decks.cardKey("Thassa’s ORACLE"), "thassa's oracle");
+});
+
+test("planes and other non-deck cards are listed apart and not judged", () => {
+  const card = (name, type, legal) => [Decks.cardKey(name), { name, type, text: "", ci: [], legal: legal || "legal", gc: false }];
+  const lookup = new Map([card("Bad Wolf Bay", "Plane — Earth", "not_legal"), card("Jace Beleren", "Legendary Planeswalker — Jace"), card("Sol Ring", "Artifact")]);
+  const a = Decks.analyze([{ q: 1, n: "Bad Wolf Bay" }, { q: 1, n: "Jace Beleren" }, { q: 1, n: "Sol Ring" }], [], "", lookup);
+  assert.deepEqual(a.extra, ["Bad Wolf Bay"]);
+  assert.deepEqual(a.banned, []);
+  assert.equal(a.total, 2);
+});
+
+test("profile sync payload is validated", () => {
+  const got = Decks.fromSync({ v: 2, user: "nati", decks: [{ id: "a1", n: "One", c: [[1, "Cmd"]], m: [[1, "X"]] }, { id: "bad id!", n: "", c: [], m: [] }, null] });
+  assert.equal(got.user, "nati");
+  assert.equal(got.decks.length, 1);
+  assert.equal(got.decks[0].source.id, "a1");
+  assert.equal(Decks.fromSync({ decks: [] }), null);
+  assert.equal(Decks.fromSync("nope"), null);
+});
