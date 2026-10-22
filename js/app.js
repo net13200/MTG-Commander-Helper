@@ -17,7 +17,7 @@
   const BATCH_MS = 1500;
   const ATTRIB_MS = 8000;
 
-  const ui = { view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
+  const ui = { cmdBy: {}, edit: null, view: "home", params: {}, setup: null, manual: null, panel: null, attrib: null, swapPick: null, elim: null, end: null, deck: null, riv: { kind: "player", id: null }, season: null, statsSeason: "" };
   let game = Store.loadGame();
   const pending = new Map(); // batch key -> { ev, timer }
   let confirmCb = null;
@@ -126,13 +126,20 @@
 
   // Taps on the same counter are merged into one log entry once input pauses.
   function queue(base, d) {
-    const key = [base.type, base.seat, base.from, base.idx, base.name].join("|");
+    const key = [base.type, base.seat, base.from, base.idx, base.name, base.by].join("|");
     let p = pending.get(key);
     if (!p) {
       p = { ev: { ...base, delta: 0 } };
       pending.set(key, p);
     }
     p.ev.delta += d;
+    // Ask "from whom?" as soon as life starts dropping, not after the pause.
+    if (base.type === "life") {
+      if (p.ev.delta < 0 && !p.ev.chosen && liveState().alive.some((x) => x !== base.seat)) {
+        clearTimeout(attribTimer);
+        ui.attrib = { seat: base.seat, key };
+      } else if (ui.attrib && ui.attrib.key === key) ui.attrib = null;
+    }
     clearTimeout(p.timer);
     p.timer = setTimeout(() => commitPending(key), BATCH_MS);
     persist();
@@ -146,8 +153,8 @@
     pending.delete(key);
     if (p.ev.delta) {
       const ev = push(p.ev);
-      if (ev.type === "life" && ev.delta < 0 && !quiet) askSource(ev);
-    }
+      if (ev.type === "life") settleSource(ev, key, quiet);
+    } else if (ui.attrib && ui.attrib.key === key) ui.attrib = null;
     persist();
     if (!quiet) render();
   }
@@ -165,16 +172,26 @@
     return ev;
   }
 
-  function askSource(ev) {
-    const st = liveState();
-    const others = st.alive.filter((s) => s !== ev.seat);
-    clearTimeout(attribTimer);
-    if (others.length === 1) {
-      ev.source = others[0];
+  // Once a life loss is committed: in 1v1 the opponent is the default source;
+  // otherwise it stays unknown. The strip lingers a few seconds so the source
+  // (or "paid life") can still be picked or changed.
+  function settleSource(ev, key, quiet) {
+    const chosen = ev.chosen;
+    delete ev.chosen;
+    const strip = ui.attrib && ui.attrib.key === key;
+    if (ev.delta >= 0) {
+      if (strip) ui.attrib = null;
       return;
     }
-    if (!others.length) return;
+    const others = Game.derive(game.setup, game.events).alive.filter((s) => s !== ev.seat);
+    if (!chosen && ev.source == null && others.length === 1) ev.source = others[0];
+    if (!strip) return;
+    if (chosen || quiet || !others.length) {
+      ui.attrib = null;
+      return;
+    }
     ui.attrib = { seat: ev.seat, evId: ev.id };
+    clearTimeout(attribTimer);
     attribTimer = setTimeout(() => {
       ui.attrib = null;
       if (ui.view === "game") render();
@@ -206,9 +223,12 @@
     const name = nm(ev.seat);
     switch (ev.type) {
       case "life":
-        return t("ev_life", { name, d: fmtDelta(ev.delta) }) + (Number.isInteger(ev.source) ? t("ev_from", { name: nm(ev.source) }) : "");
+        return t("ev_life", { name, d: fmtDelta(ev.delta) }) + (ev.source === ev.seat ? t("ev_paid") : Number.isInteger(ev.source) ? t("ev_from", { name: nm(ev.source) }) : "");
       case "cmd":
-        return t("ev_cmd", { name, d: fmtDelta(ev.delta), src: nm(ev.from), cmd: cmdNames(seats[ev.from] || {})[ev.idx] || "" });
+        return (
+          t("ev_cmd", { name, d: fmtDelta(ev.delta), src: nm(ev.from), cmd: cmdNames(seats[ev.from] || {})[ev.idx] || "" }) +
+          (Number.isInteger(ev.by) && ev.by !== ev.from ? t("ev_controlled", { name: nm(ev.by) }) : "")
+        );
       case "poison":
         return t("ev_poison", { name, d: fmtDelta(ev.delta) });
       case "tax":
@@ -337,8 +357,18 @@
     if (st.monarch === i) badges.push(`<span class="badge" title="${t("monarch")}">👑</span>`);
     if (st.initiative === i) badges.push(`<span class="badge" title="${t("initiative")}">🏰</span>`);
     if (p.poison) badges.push(`<span class="badge poison">☠ ${p.poison}</span>`);
-    const topCmd = Math.max(0, ...Object.values(p.cmd));
-    if (topCmd) badges.push(`<span class="badge">⚔ ${topCmd}</span>`);
+    // One badge per commander that has hit this player, biggest first.
+    Object.entries(p.cmd)
+      .filter(([, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([key, v]) => {
+        const [j, idx] = key.split(":").map(Number);
+        const src = game.setup.seats[j];
+        const names = cmdNames(src);
+        badges.push(
+          `<span class="badge cmd ${v >= Game.LETHAL_CMD ? "hot" : ""}" title="${esc(src.name)}: ${esc(names[idx] || "")}">${avatar(src)}⚔ ${v}${names.length > 1 ? `<sup>${idx + 1}</sup>` : ""}</span>`
+        );
+      });
     p.tax.forEach((casts) => {
       if (casts) badges.push(`<span class="badge">${t("taxShort")} +${casts * 2}</span>`);
     });
@@ -358,8 +388,10 @@
     return `<div class="tile ${i === st.active ? "active" : ""} ${p.out ? "out" : ""} ${p.lethal ? "lethal" : ""}" style="grid-row:${pos[0]};grid-column:${pos[1]}">
       <div class="tile-inner r${rot} ${S.settings.showArt && seat.art ? "has-art" : ""}" style="--c:${esc(seat.color)}${S.settings.showArt && seat.art ? `;--art:url('${esc(seat.art)}')` : ""}">
         <div class="life-wrap">
-          <button class="zone minus" data-life="-1" data-seat="${i}" aria-label="−1"><span>−</span></button>
-          <button class="zone plus" data-life="1" data-seat="${i}" aria-label="+1"><span>+</span></button>
+          <button class="zone minus outer" data-life="-1" data-hold="step" data-seat="${i}" aria-label="−1"><span>−</span></button>
+          <button class="zone minus inner" data-life="-1" data-hold="edit" data-seat="${i}" aria-label="−1"></button>
+          <button class="zone plus inner" data-life="1" data-hold="edit" data-seat="${i}" aria-label="+1"></button>
+          <button class="zone plus outer" data-life="1" data-hold="step" data-seat="${i}" aria-label="+1"><span>+</span></button>
           <div class="life">${p.life}${pend ? `<span class="pending">${fmtDelta(pend)}</span>` : ""}</div>
         </div>
         ${badges.length ? `<div class="tile-foot">${badges.join("")}</div>` : ""}
@@ -374,9 +406,16 @@
   function attribStrip(i, st) {
     const seats = game.setup.seats;
     const others = st.alive.filter((s) => s !== i);
+    let current;
+    if (ui.attrib.key) current = pending.has(ui.attrib.key) ? pending.get(ui.attrib.key).ev.source : null;
+    else {
+      const ev = game.events.find((e) => e.id === ui.attrib.evId);
+      current = ev ? ev.source : null;
+    }
+    const on = (v) => (current === v ? " on" : "");
     return `<div class="attrib"><span>${t("fromWhom")}</span>${others
-      .map((j) => `<button class="av" data-action="attrib" data-src="${j}" title="${esc(seats[j].name)}">${avatar(seats[j])}</button>`)
-      .join("")}<button class="av skip" data-action="attrib" data-src="">?</button></div>`;
+      .map((j) => `<button class="av${on(j)}" data-action="attrib" data-src="${j}" title="${esc(seats[j].name)}">${avatar(seats[j])}</button>`)
+      .join("")}<button class="av paid${on(i)}" data-action="attrib" data-src="${i}" title="${t("paidLifeHint")}">🩸<small>${t("paidLife")}</small></button><button class="av skip${current == null ? " on" : ""}" data-action="attrib" data-src="">?</button></div>`;
   }
 
   function stepRow(label, value, attrs) {
@@ -399,16 +438,23 @@
     const counterRows = Object.entries(p.counters)
       .map(([name, v]) => stepRow(`<span>${counterLabel(name)}</span>`, v, `data-action="counter" data-seat="${i}" data-name="${esc(name)}"`))
       .join("");
-    const quick = QUICK_COUNTERS.filter((c) => !(c in p.counters))
-      .map((c) => `<button class="chip" data-action="counter" data-seat="${i}" data-name="${c}" data-d="1">+ ${t("ctr_" + c)}</button>`)
+    // Counters anyone has used (this game or recently) are offered to everyone.
+    const usedHere = st.players.flatMap((pl) => Object.keys(pl.counters));
+    const quick = [...new Set([...QUICK_COUNTERS, ...usedHere, ...(S.settings.recentCounters || [])])]
+      .filter((c) => !(c in p.counters))
+      .map((c) => `<button class="chip" data-action="counter" data-seat="${i}" data-name="${esc(c)}" data-d="1">+ ${counterLabel(c)}</button>`)
       .join("");
+    const by = ui.cmdBy[i] == null ? null : ui.cmdBy[i];
+    const dealtBy = `<div class="chips dealt-by"><small class="muted">${t("dealtBy")}</small><button class="chip ${by == null ? "on" : ""}" data-action="cmdBy" data-seat="${i}" data-v="">${t("ownerDefault")}</button>${seats
+      .map((s, j) => (j === i ? "" : `<button class="chip ${by === j ? "on" : ""}" data-action="cmdBy" data-seat="${i}" data-v="${j}">${avatar(s)}${esc(s.name)}</button>`))
+      .join("")}</div>`;
     const tokenBtn = (token, icon) =>
       `<button class="chip ${st[token] === i ? "on" : ""}" data-action="token" data-token="${token}" data-seat="${i}">${icon} ${t(token)}</button>`;
     const flagBtn = (flag, icon) => `<button class="chip ${p[flag] ? "on" : ""}" data-action="flag" data-flag="${flag}" data-seat="${i}">${icon} ${t(flag)}</button>`;
     return `<div class="panel">
       <div class="panel-head">${avatar(seats[i])}<b class="grow">${esc(seats[i].name)}</b><button class="icon-btn" data-action="panel" data-seat="${i}" aria-label="${t("close")}">✕</button></div>
       <div class="panel-body">
-        <h3>${t("cmdDamageTaken")}</h3>${cmdRows}
+        <h3>${t("cmdDamageTaken")}</h3>${dealtBy}${cmdRows}
         <h3>${t("poison")}</h3>${stepRow(`<span>☠ ${t("poison")}</span>`, p.poison, `data-action="poison" data-seat="${i}"`)}
         <h3>${t("commanderTax")}</h3>${taxRows}
         <h3>${t("tokens")}</h3><div class="chips">${tokenBtn("monarch", "👑")}${tokenBtn("initiative", "🏰")}</div>
@@ -435,8 +481,10 @@
     const st = liveState();
     const n = game.setup.seats.length;
     const L = Game.layout(n, isLandscape());
-    const tiles = game.setup.seats.map((s, i) => tileHtml(s, i, st, L.seats[i])).join("");
-    return `<div class="board ${S.settings.dimInactive ? "dim" : ""}" style="grid-template-rows:${L.rows};grid-template-columns:${L.cols}">${tiles}</div>${ui.panel == null ? hubHtml(st, L.seats[st.active][2]) : ""}`;
+    // "Face me": every tile reads the right way up for whoever holds the device.
+    const seatsPos = L.seats.map((pos) => (S.settings.faceMe ? [pos[0], pos[1], 0] : pos));
+    const tiles = game.setup.seats.map((s, i) => tileHtml(s, i, st, seatsPos[i])).join("");
+    return `<div class="board ${S.settings.dimInactive ? "dim" : ""}" style="grid-template-rows:${L.rows};grid-template-columns:${L.cols}">${tiles}</div>${ui.panel == null ? hubHtml(st, seatsPos[st.active][2]) : ""}`;
   }
 
   function playersView() {
@@ -905,7 +953,9 @@
       <section>
         <label class="field"><span>${t("language")}</span><select data-change="lang"><option value="en" ${st.lang === "en" ? "selected" : ""}>English</option><option value="he" ${st.lang === "he" ? "selected" : ""}>עברית</option></select></label>
         <label class="field"><span>${t("defaultStartingLife")}</span><input type="number" min="1" max="999" inputmode="numeric" value="${st.startingLife}" data-change="defaultLife"></label>
-        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}
+        ${toggle("keepAwake")}${toggle("dimInactive")}${toggle("turnTimer")}${toggle("showArt")}${toggle("faceMe")}
+        <label class="field"><span>${t("holdStep")}</span><select data-change="holdStep">${[5, 10].map((n) => `<option value="${n}" ${Number(st.holdStep || 10) === n ? "selected" : ""}>±${n}</option>`).join("")}</select></label>
+        <p class="muted small">${t("holdStepHint")}</p>
       </section>
       <section><h2>⭐ ${t("oneTapTitle")}</h2>
         <p class="small">${t("oneTapIntro")}</p>
@@ -976,6 +1026,7 @@
         <button class="btn" data-action="noteModal">📝 ${t("addNote")}</button>
         <button class="btn" data-action="tokenModal" data-token="monarch">👑 ${t("monarch")}</button>
         <button class="btn" data-action="tokenModal" data-token="initiative">🏰 ${t("initiative")}</button>
+        <button class="btn" data-action="toggleFace">🔄 ${S.settings.faceMe ? t("faceSeats") : t("faceMeAction")}</button>
         ${canReroll ? `<button class="btn" data-action="reroll">🎲 ${t("rerollFirst")}</button>` : ""}
         <button class="btn primary" data-action="endPrompt">🏁 ${t("endGame")}</button>
         <button class="btn" data-action="restartGame">🔄 ${t("newGameSamePod")}</button>
@@ -1019,12 +1070,62 @@
     );
   }
 
+  function lifeEditor() {
+    const { seat, mode, amount, source } = ui.edit;
+    const st = liveState();
+    const seats = game.setup.seats;
+    const life = st.players[seat].life;
+    const amt = parseInt(amount, 10);
+    const after = !Number.isFinite(amt) ? null : mode === "set" ? amt : mode === "gain" ? life + amt : life - amt;
+    const losing = after != null ? after < life : mode !== "gain";
+    const others = st.alive.filter((x) => x !== seat);
+    const src = (v, label) => `<button class="chip ${source === v ? "on" : ""}" data-action="lifeSrc" data-v="${v == null ? "" : v}">${label}</button>`;
+    openModal(
+      `<h2>${avatar(seats[seat])} ${esc(seats[seat].name)} <small class="muted">${t("life")} ${life}</small></h2>
+      <div class="chips">${["lose", "gain", "set"].map((m) => `<button class="chip ${mode === m ? "on" : ""}" data-action="lifeMode" data-v="${m}">${t("mode_" + m)}</button>`).join("")}</div>
+      <input id="lifeAmt" type="number" inputmode="numeric" min="0" max="999" value="${esc(amount)}" placeholder="${mode === "set" ? life : "0"}" autocomplete="off">
+      ${mode === "set" ? "" : `<div class="chips">${[1, 2, 3, 5, 7, 10, 20].map((n) => `<button class="chip" data-action="lifeAmt" data-v="${n}">${n}</button>`).join("")}</div>`}
+      ${losing ? `<h3>${t("fromWhom")}</h3><div class="chips">${others.map((j) => src(j, avatar(seats[j]) + esc(seats[j].name))).join("")}${src(seat, "🩸 " + t("paidLife"))}${src(null, t("unknown"))}</div>` : ""}
+      <p class="life-preview" id="lifePreview">${after == null ? "&nbsp;" : `${life} → <b>${after}</b>`}</p>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="lifeApply">${t("apply")}</button></div>`,
+      "small"
+    );
+    const input = $("#lifeAmt");
+    if (input) {
+      input.focus();
+      input.addEventListener("input", () => {
+        const v = parseInt(input.value, 10);
+        const next = !Number.isFinite(v) ? null : ui.edit.mode === "set" ? v : ui.edit.mode === "gain" ? life + v : life - v;
+        $("#lifePreview").innerHTML = next == null ? "&nbsp;" : `${life} → <b>${next}</b>`;
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") A.lifeApply();
+      });
+    }
+  }
+
+  function readLifeEditor() {
+    const input = $("#lifeAmt");
+    if (input && ui.edit) ui.edit.amount = input.value;
+  }
+
+  function openLifeEditor(seat) {
+    flushAll();
+    const others = liveState().alive.filter((x) => x !== seat);
+    ui.edit = { seat, mode: "lose", amount: "", source: others.length === 1 ? others[0] : null };
+    render();
+    lifeEditor();
+  }
+
   function guessKiller(seat) {
     for (let k = game.events.length - 1; k >= 0; k--) {
       const e = game.events[k];
       if (e.reverted || e.seat !== seat) continue;
-      if (e.type === "life" && Number.isInteger(e.source)) return e.source;
-      if (e.type === "cmd" && e.from !== seat) return e.from;
+      if (e.type === "life" && Number.isInteger(e.source) && e.source !== seat) return e.source;
+      if (e.type === "cmd") {
+        const by = Number.isInteger(e.by) ? e.by : e.from;
+        if (by !== seat) return by;
+      }
     }
     return null;
   }
@@ -1148,12 +1249,22 @@
     panel: (el) => {
       const i = Number(el.dataset.seat);
       ui.panel = ui.panel === i ? null : i;
+      ui.cmdBy = {};
       render();
     },
     attrib: (el) => {
       if (!ui.attrib) return;
-      const ev = game.events.find((e) => e.id === ui.attrib.evId);
-      if (ev) ev.source = el.dataset.src === "" ? null : Number(el.dataset.src);
+      const v = el.dataset.src === "" ? null : Number(el.dataset.src);
+      if (ui.attrib.key) {
+        const p = pending.get(ui.attrib.key);
+        if (p) {
+          p.ev.source = v;
+          p.ev.chosen = true;
+        }
+      } else {
+        const ev = game.events.find((e) => e.id === ui.attrib.evId);
+        if (ev) ev.source = v;
+      }
       ui.attrib = null;
       clearTimeout(attribTimer);
       persist();
@@ -1166,7 +1277,44 @@
       const d = Number(el.dataset.d);
       const cur = liveState().players[seat].cmd[from + ":" + idx] || 0;
       if (cur + d < 0) return;
-      queue({ type: "cmd", seat, from, idx }, d);
+      const by = ui.cmdBy[seat];
+      queue(by == null ? { type: "cmd", seat, from, idx } : { type: "cmd", seat, from, idx, by }, d);
+    },
+    cmdBy: (el) => {
+      ui.cmdBy[Number(el.dataset.seat)] = el.dataset.v === "" ? null : Number(el.dataset.v);
+      render();
+    },
+    toggleFace: () => {
+      S.settings.faceMe = !S.settings.faceMe;
+      Store.save();
+      closeModal();
+      render();
+    },
+    lifeMode: (el) => {
+      readLifeEditor();
+      ui.edit.mode = el.dataset.v;
+      lifeEditor();
+    },
+    lifeAmt: (el) => {
+      readLifeEditor();
+      ui.edit.amount = el.dataset.v;
+      lifeEditor();
+    },
+    lifeSrc: (el) => {
+      readLifeEditor();
+      ui.edit.source = el.dataset.v === "" ? null : Number(el.dataset.v);
+      lifeEditor();
+    },
+    lifeApply: () => {
+      readLifeEditor();
+      const { seat, mode, source } = ui.edit;
+      const amt = parseInt(ui.edit.amount, 10);
+      if (!Number.isFinite(amt) || amt < 0) return toast(t("enterNumber"));
+      const life = liveState().players[seat].life;
+      const delta = mode === "set" ? amt - life : mode === "gain" ? amt : -amt;
+      closeModal();
+      if (!delta) return;
+      dispatch(delta < 0 ? { type: "life", seat, delta, source } : { type: "life", seat, delta, source: null });
     },
     poison: (el) => {
       const seat = Number(el.dataset.seat);
@@ -1780,6 +1928,10 @@
       Store.save();
       render();
     },
+    holdStep: (el) => {
+      S.settings.holdStep = Number(el.value);
+      Store.save();
+    },
     defaultLife: (el) => {
       S.settings.startingLife = clampLife(el.value);
       Store.save();
@@ -1868,6 +2020,10 @@
     addCounter: (form) => {
       const name = form.querySelector("input").value.trim();
       if (!name) return;
+      if (!QUICK_COUNTERS.includes(name)) {
+        S.settings.recentCounters = [name, ...(S.settings.recentCounters || []).filter((c) => c !== name)].slice(0, 12);
+        Store.save();
+      }
       queue({ type: "counter", seat: Number(form.dataset.seat), name }, 1);
     },
   };
@@ -1942,16 +2098,21 @@
     if (q.length >= 2) acTimer = setTimeout(() => autocomplete(q), 250);
   });
 
-  // Life taps respond on pointerdown; holding repeats, speeding up after a moment.
+  // Life taps respond on pointerdown with ±1. Holding the outer part of a tile
+  // jumps by the long-press step (10 by default) and repeats; holding next to
+  // the number opens the life editor instead.
   let hold = null;
   function stopHold() {
     if (hold) clearTimeout(hold.timer);
     hold = null;
   }
   function lifeTap(seat, d) {
-    if (liveState().players[seat].out) return;
-    if (ui.attrib && ui.attrib.seat === seat) ui.attrib = null;
+    if (liveState().players[seat].out) return false;
     queue({ type: "life", seat, source: null }, d);
+    return true;
+  }
+  function buzz() {
+    if (navigator.vibrate) navigator.vibrate(15);
   }
   app.addEventListener("pointerdown", (e) => {
     const zone = e.target.closest("[data-life]");
@@ -1960,13 +2121,25 @@
     stopHold();
     const seat = Number(zone.dataset.seat);
     const d = Number(zone.dataset.life);
-    lifeTap(seat, d);
-    let reps = 0;
+    if (!lifeTap(seat, d)) return;
+    const step = Number(S.settings.holdStep) || 10;
     hold = {
-      timer: setTimeout(function repeat() {
-        reps++;
-        lifeTap(seat, reps > 10 ? d * 5 : d);
-        if (hold) hold.timer = setTimeout(repeat, reps > 10 ? 250 : 110);
+      timer: setTimeout(() => {
+        buzz();
+        if (zone.dataset.hold === "edit") {
+          lifeTap(seat, -d); // take back the tap that started the press
+          stopHold();
+          openLifeEditor(seat);
+          return;
+        }
+        lifeTap(seat, d * (step - 1)); // the first tap already counted 1
+        const repeat = () => {
+          if (!hold) return;
+          buzz();
+          lifeTap(seat, d * step);
+          hold.timer = setTimeout(repeat, 650);
+        };
+        if (hold) hold.timer = setTimeout(repeat, 650);
       }, 450),
     };
   });

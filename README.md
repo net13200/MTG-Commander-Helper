@@ -14,11 +14,11 @@ Opening `index.html` directly also works, but offline install needs it served ov
 
 ## What's in the MVP
 
-- **Tracker for 2–6 players**: tiles face each seat (portrait and landscape layouts), tap ±1, long-press repeats, and changes batch into one log entry after 1.5 s.
-- **Commander damage** per source commander (Partner/Background get two), entered once and applied to life too; your own commander counts. 21 from one commander, 10 poison or 0 life flags the player and offers to eliminate them, unless they have "can't lose".
-- **Poison, Monarch, the Initiative, commander tax** (+2 per cast), custom counters (energy, experience, rad, anything), "can't lose" / "can't win".
+- **Tracker for 2–6 players**: tiles face each seat (portrait and landscape layouts), or all face the person holding the device ("face me"). Tap for ±1; hold the outer part of a tile for ±10 (or ±5, in Settings); hold next to the life total to type an amount or set it exactly. Changes batch into one log entry after 1.5 s.
+- **Commander damage** per source commander (Partner/Background get two), entered once and applied to life too; your own commander counts. Each commander gets its own badge on the tile. If someone else controls a commander, "Dealt by" credits the damage and the knockout to them while 21 still counts per commander. 21 from one commander, 10 poison or 0 life flags the player and offers to eliminate them, unless they have "can't lose".
+- **Poison, Monarch, the Initiative, commander tax** (+2 per cast), custom counters (energy, experience, rad, anything; a custom counter added for one player is offered to everyone and remembered for later games), "can't lose" / "can't win".
 - **Turns**: random or chosen first player, active-player marker, round counter, optional turn timer, dim-between-turns.
-- **Attribution**: after a life loss a "from whom?" strip appears on that tile; one tap, never blocking (automatic in 1v1).
+- **Attribution**: as soon as life drops, a "from whom?" strip appears on that tile; one tap, never blocking. "Paid" marks life paid as a cost, which doesn't count as damage. In 1v1 the opponent is preselected.
 - **Action log with undo**: multi-step undo, and tapping any log entry reverts or restores it. Notes with quick tags.
 - **Eliminations** record who knocked whom out and how (combat, commander damage, poison, alt-win, concede).
 - **Players and decks**: persistent profiles (name, color, avatar), guests by name that can be merged into a profile later, decks with commander(s), color identity, bracket and decklist. Commander search and color identity come from Scryfall when online.

@@ -24,6 +24,7 @@
       life,
       poison: 0,
       cmd: {}, // "fromSeat:commanderIdx" -> damage taken
+      cmdBy: {}, // same key -> who last controlled that commander when it hit
       tax: [0, 0], // casts from the command zone, per own commander
       counters: {},
       cantLose: false,
@@ -47,13 +48,18 @@
     switch (ev.type) {
       case "life":
         p.life += ev.delta;
-        if (ev.delta < 0 && isSeat(ev.source, n)) st.dealt[ev.source][ev.seat] -= ev.delta;
+        // A source equal to the player themself means paid life, not damage.
+        if (ev.delta < 0 && isSeat(ev.source, n) && ev.source !== ev.seat) st.dealt[ev.source][ev.seat] -= ev.delta;
         break;
       case "cmd": {
         const key = ev.from + ":" + ev.idx;
+        // 21 counts per commander; the damage itself goes to its controller,
+        // who is its owner unless someone else had taken it (ev.by).
+        const by = isSeat(ev.by, n) ? ev.by : ev.from;
         p.cmd[key] = (p.cmd[key] || 0) + ev.delta;
         p.life -= ev.delta;
-        st.dealt[ev.from][ev.seat] += ev.delta;
+        if (ev.delta > 0) p.cmdBy[key] = by;
+        if (by !== ev.seat) st.dealt[by][ev.seat] += ev.delta;
         break;
       }
       case "poison":
@@ -100,7 +106,7 @@
   function lethalReason(p) {
     if (p.out || p.cantLose) return null;
     for (const [key, dmg] of Object.entries(p.cmd)) {
-      if (dmg >= LETHAL_CMD) return { cause: "commander", by: Number(key.split(":")[0]) };
+      if (dmg >= LETHAL_CMD) return { cause: "commander", by: key in p.cmdBy ? p.cmdBy[key] : Number(key.split(":")[0]) };
     }
     if (p.poison >= LETHAL_POISON) return { cause: "poison", by: null };
     if (p.life <= 0) return { cause: "combat", by: null };

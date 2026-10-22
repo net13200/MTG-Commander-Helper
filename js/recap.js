@@ -25,7 +25,7 @@
         let src = null;
         if (e.type === "life") {
           life[e.seat] += e.delta;
-          if (e.delta < 0) {
+          if (e.delta < 0 && e.source !== e.seat) {
             dmg = -e.delta;
             src = Number.isInteger(e.source) ? e.source : null;
           }
@@ -33,7 +33,7 @@
           life[e.seat] -= e.delta;
           if (e.delta > 0) {
             dmg = e.delta;
-            src = e.from;
+            src = Number.isInteger(e.by) ? e.by : e.from;
           }
         }
         if (life[e.seat] < low[e.seat]) low[e.seat] = life[e.seat];

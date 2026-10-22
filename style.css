@@ -435,3 +435,26 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--muted); }
 .unk-actions { display: flex; gap: 6px; margin-inline-start: auto; }
 .kept { font-size: 0.85rem; color: var(--muted); }
 .check-head .btn { white-space: nowrap; flex: none; }
+
+/* ---------- Life zones: outer = ±step on hold, inner = editor on hold ---------- */
+
+.zone.outer { width: 32%; }
+.zone.inner { width: 18%; }
+.zone.minus.inner { left: 32%; }
+.zone.plus.inner { right: 32%; left: auto; }
+
+.badge.cmd { display: inline-flex; align-items: center; gap: 0.25em; padding-inline-start: 0.2em; }
+.badge.cmd .avatar { width: 1.35em; height: 1.35em; font-size: 0.8em; }
+.badge.cmd sup { font-size: 0.65em; }
+.badge.cmd.hot { background: rgba(229, 72, 77, 0.75); }
+
+.av.on .avatar, .av.skip.on, .av.paid.on { box-shadow: 0 0 0 2px #fff; }
+.av.paid { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; width: 2.6em; height: 2.4em; border-radius: 12px; background: var(--surface-2); font-size: 1em; line-height: 1; }
+.av.paid small { font-size: 0.6em; margin-top: 1px; }
+
+.dealt-by { align-items: center; gap: 6px; margin-bottom: 4px; }
+.dealt-by .chip { min-height: 32px; font-size: 0.85em; }
+
+#lifeAmt { font-size: 1.8rem; text-align: center; font-weight: 800; }
+.life-preview { margin: 0; text-align: center; font-size: 1.2rem; color: var(--muted); }
+.life-preview b { color: var(--ink); font-size: 1.4rem; }

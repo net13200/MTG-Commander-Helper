@@ -98,3 +98,17 @@ test("every pod size has a seat for each player in both orientations", () => {
     for (const landscape of [false, true]) assert.equal(Game.layout(n, landscape).seats.length, n);
   }
 });
+
+test("paid life is not damage; a stolen commander's damage goes to its controller", () => {
+  const st = Game.derive(setup(3), [
+    { type: "life", seat: 0, delta: -7, source: 0 },
+    { type: "cmd", seat: 1, from: 2, idx: 0, delta: 15 },
+    { type: "cmd", seat: 1, from: 2, idx: 0, delta: 6, by: 0 },
+  ]);
+  assert.equal(st.players[0].life, 33);
+  assert.equal(st.dealt[0][0], 0);
+  assert.equal(st.dealt[2][1], 15);
+  assert.equal(st.dealt[0][1], 6);
+  assert.equal(st.players[1].cmd["2:0"], 21);
+  assert.deepEqual(st.players[1].lethal, { cause: "commander", by: 0 });
+});
