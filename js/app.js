@@ -822,26 +822,23 @@
     const urlC = "https://api2.moxfield.com/v3/decks/all/";
     const copy = (text) => `<button class="btn small" data-action="copyText" data-text="${esc(text)}">📋 ${esc(text.length > 28 ? text.slice(0, 26) + "…" : text)}</button>`;
     const steps = [
-      `Open the <b>Shortcuts</b> app → <b>+</b>. Name the shortcut <b>Moxfield → Commander Tracker</b>.`,
-      `Add <b>Ask for Input</b>. Input type: <b>Text</b>. Prompt: <i>Moxfield username</i>.`,
-      `Add a <b>Text</b> action (not URL: its separate boxes break the address). Paste ${copy(urlA)} and, right after it on the same line, insert the <b>Ask for Input</b> variable (called <b>Provided Input</b> on older iPhones).`,
-      `Add <b>Get Contents of URL</b> (it takes the <b>Text</b> above). Tap <b>Show More</b> → <b>Headers</b> → add Key <code>Accept</code>, Value <code>application/json</code>.`,
-      `Add <b>Get Dictionary Value</b>: get <b>Value</b> for key ${copy("data")} in <b>Contents of URL</b>.`,
-      `Add <b>Text</b> with ${copy("CT-MOXFIELD-1 ")} followed by the <b>Ask for Input</b> variable. Then add <b>Add to Variable</b>, variable name ${copy("Export")}.`,
-      `Add <b>Repeat with Each</b>, repeating over <b>Dictionary Value</b>. Inside the repeat, add in this order:
+      `Open the <b>Shortcuts</b> app and tap <b>+</b> (top right). Tap the name at the top and call it <b>Moxfield</b>.`,
+      `Tap the search box at the bottom (<i>Search for apps and actions</i>), type <b>Ask for Input</b> and tap it. It asks for your username when the Shortcut runs.`,
+      `Search <b>Text</b> and tap it. Tap inside the new Text box, paste ${copy(urlA)}, and while the keyboard is still open tap <b>Ask for Input</b> in the grey bar above the keyboard. The box now ends in a blue <b>Ask for Input</b> bubble.`,
+      `Search <b>Get Contents of URL</b> and tap it. It should say <i>Get contents of <b>Text</b></i>.`,
+      `Search <b>Get Dictionary Value</b> and tap it. Tap the word <b>Key</b> and type ${copy("data")}.`,
+      `Search <b>Repeat with Each</b> and tap it. It should say <i>Repeat with each item in <b>Dictionary Value</b></i>. The next five actions go <b>inside</b> it (between <i>Repeat</i> and <i>End Repeat</i>); drag them there if they land below.
         <ol type="a">
-          <li><b>Get Dictionary Value</b>: <b>Value</b> for key ${copy("publicId")} in <b>Repeat Item</b>.</li>
-          <li><b>Text</b>: ${copy(urlC)} then, on the same line, insert the <b>Dictionary Value</b> variable.</li>
-          <li><b>Get Contents of URL</b>, with the same <code>Accept: application/json</code> header.</li>
-          <li><b>Get Text from Input</b> (input: <b>Contents of URL</b>).</li>
-          <li><b>Add to Variable</b>: <b>Export</b>.</li>
+          <li><b>Get Dictionary Value</b>: tap <b>Key</b>, type ${copy("publicId")}; tap the last blue word and choose <b>Repeat Item</b>.</li>
+          <li><b>Text</b>: paste ${copy(urlC)} and tap <b>Dictionary Value</b> in the bar above the keyboard.</li>
+          <li><b>Get Contents of URL</b> (of <b>Text</b>).</li>
+          <li><b>Add to Variable</b>: tap <b>Variable Name</b>, type ${copy("Decks")}.</li>
           <li><b>Wait</b>: 1 second.</li>
         </ol>`,
-      `After <b>End Repeat</b>, add <b>Combine Text</b>: combine <b>Export</b> with <b>Custom</b> separator ${copy(Decks.SHORTCUT_SEP)}.`,
-      `Add <b>Copy to Clipboard</b> (<b>Combined Text</b>).`,
-      `Add <b>Show Notification</b>: <i>Copied! Open Commander Tracker → your player → Paste decks from the Shortcut.</i>`,
-      `Run it once with your username. Tap <b>Allow</b> when it asks to connect to api2.moxfield.com. Then in the app: your player → <b>📋 Paste decks from the Shortcut</b>.`,
-      `Share it: on the shortcut, <b>⋯</b> → <b>Share</b> → <b>Copy iCloud Link</b>. Send the link to the group, and to whoever maintains the app so it can go in as the "Get the Shortcut" button.`,
+      `Below <b>End Repeat</b>, add <b>Combine Text</b>. Tap the first blue word and choose <b>Decks</b>; tap <b>New Lines</b>, choose <b>Custom</b> and type ${copy(Decks.SHORTCUT_SEP)}.`,
+      `Add <b>Copy to Clipboard</b>. Tap <b>Done</b>.`,
+      `Run it: tap the Shortcut, type your Moxfield username, and tap <b>Allow</b> if it asks to connect to moxfield.com. When it finishes, open this app → your player → <b>📋 Paste decks from the Shortcut</b>.`,
+      `Share it so others skip all this: press and hold the Shortcut → <b>Share</b> → <b>Copy iCloud Link</b>, and send the link.`,
     ];
     openModal(
       `<h2>🛠 ${t("scHowBuild")}</h2>

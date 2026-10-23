@@ -6,27 +6,24 @@ One person with an iPhone builds it once (about 10 minutes) and shares its iClou
 
 ## Build it
 
-Action names are as in the English Shortcuts app.
+Action names are as in the English Shortcuts app. Add each action by typing its name in the search box at the bottom of the editor.
 
-1. **Shortcuts** app → **+**. Name it **Moxfield → Commander Tracker**.
-2. **Ask for Input**: input type **Text**, prompt *Moxfield username*.
-3. **Text** (not **URL**, whose separate boxes split the address): `https://api2.moxfield.com/v2/decks/search?pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending&authorUserNames=` and, in the same box right after it, the **Ask for Input** variable (called **Provided Input** on older iOS).
-4. **Get Contents of URL**: Show More → Headers → `Accept` = `application/json`.
-5. **Get Dictionary Value**: Value for key `data` in **Contents of URL**.
-6. **Text**: `CT-MOXFIELD-1 ` + **Ask for Input**. Then **Add to Variable** `Export`.
-7. **Repeat with Each** over **Dictionary Value**, and inside:
-   1. **Get Dictionary Value**: Value for key `publicId` in **Repeat Item**.
-   2. **Text**: `https://api2.moxfield.com/v3/decks/all/` + **Dictionary Value**, on one line.
-   3. **Get Contents of URL** with the same `Accept: application/json` header.
-   4. **Get Text from Input** (input: **Contents of URL**).
-   5. **Add to Variable** `Export`.
-   6. **Wait** 1 second.
-8. After **End Repeat**: **Combine Text** of `Export` with **Custom** separator `@@CT@@`.
-9. **Copy to Clipboard** (**Combined Text**).
-10. **Show Notification**: *Copied! Open Commander Tracker → your player → Paste decks from the Shortcut.*
-11. Run it once; tap **Allow** for api2.moxfield.com.
-12. **⋯ → Share → Copy iCloud Link**, and send the link around.
+1. **Shortcuts** app → **+**. Name it **Moxfield**.
+2. **Ask for Input** (asks for the username).
+3. **Text**: paste `https://api2.moxfield.com/v2/decks/search?pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending&authorUserNames=` and, with the keyboard still open, tap **Ask for Input** in the bar above it so the variable ends the same line. (Use **Text**, not **URL**: the URL action splits it into separate addresses.)
+4. **Get Contents of URL** (of **Text**).
+5. **Get Dictionary Value**: key `data`.
+6. **Repeat with Each** item in **Dictionary Value**, and inside it:
+   1. **Get Dictionary Value**: key `publicId` in **Repeat Item**.
+   2. **Text**: `https://api2.moxfield.com/v3/decks/all/` followed by the **Dictionary Value** variable.
+   3. **Get Contents of URL** (of **Text**).
+   4. **Add to Variable** `Decks`.
+   5. **Wait** 1 second (Moxfield limits how fast it can be asked).
+7. After **End Repeat**: **Combine Text** of `Decks` with **Custom** separator `@@CT@@`.
+8. **Copy to Clipboard**.
+9. Run it once and tap **Allow** for moxfield.com.
+10. Press and hold the Shortcut → **Share** → **Copy iCloud Link**, and send the link around.
 
 ## What it produces
 
-`CT-MOXFIELD-1 <username>` followed by each deck's raw Moxfield JSON, separated by `@@CT@@`. `Decks.fromShortcutText` in `js/decks.js` reads it and keeps only decks by that username.
+Each deck's raw Moxfield JSON, separated by `@@CT@@` (optionally preceded by a `CT-MOXFIELD-1 <username>` line, which makes the app keep only decks by that username). `Decks.fromShortcutText` in `js/decks.js` reads it.
