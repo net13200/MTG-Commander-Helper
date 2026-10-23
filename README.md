@@ -45,6 +45,9 @@ Moxfield has no official public API and doesn't let other sites read its decks, 
 - **Paste from clipboard**: paste the deck link and tap Import. The app opens the deck on Moxfield; there, tap **More → Export → Copy plain text**, come back and tap **Paste from clipboard**.
 - **One-tap bookmark and profile sync**: in **Settings → One-tap Moxfield import**, add the "Send to Commander Tracker" bookmark (drag it to the bookmarks bar, or copy its code into a bookmark on a phone). Tapped on a Moxfield deck page it sends that deck; tapped on a profile page (`moxfield.com/users/<name>`) it sends all of that user's public decks, and the app lists them to tick and sync, remembering the picks for next time ("Sync from Moxfield" on a player's page walks through it). The bookmark reads the decks on Moxfield's own page and hands them to the app in a new tab with `postMessage`, so nothing goes through a server. On iPhone/iPad it opens in Safari, which keeps its data apart from the Home Screen app, so use the clipboard there.
 
+- **iPhone Shortcut**: on iPhone, a Shortcut (built once from [docs/iphone-shortcut.md](docs/iphone-shortcut.md), then shared by iCloud link) fetches all of a user's public decks from the phone and copies them; **📋 Paste decks from the Shortcut** on the player's page takes them in.
+- **Android app**: imports by username directly (see the Android section).
+
 Everything is saved on the device: decks, games and the Scryfall card data used by deck checks (so checks work offline). Each deck can also be saved as a `.txt` decklist.
 
 ## Sharing players between phones

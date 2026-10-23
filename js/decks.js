@@ -268,6 +268,53 @@
     return { user: typeof data.user === "string" ? data.user.slice(0, 60) : null, decks, failed };
   }
 
+  // ---------- iPhone Shortcut ----------
+  // The "Send my Moxfield decks" Shortcut fetches decks on the iPhone (where
+  // Shortcuts isn't bound by the browser's CORS rule) and copies one text:
+  // "CT-MOXFIELD-1 <username>" then each deck's raw JSON, separated by
+  // "@@CT@@". This turns that text into the same shape as a profile sync.
+  const SHORTCUT_SEP = "@@CT@@";
+
+  function fromShortcutText(text) {
+    const parts = String(text || "").split(SHORTCUT_SEP).map((x) => x.trim()).filter(Boolean);
+    if (!parts.length) return null;
+    let user = null;
+    const head = parts[0].match(/^CT-MOXFIELD-1\s+(.+)$/);
+    if (head) {
+      user = head[1].trim().slice(0, 60);
+      parts.shift();
+    }
+    const decks = [];
+    const failed = [];
+    for (const part of parts) {
+      let data;
+      try {
+        data = JSON.parse(part);
+      } catch (e) {
+        failed.push("?");
+        continue;
+      }
+      if (!data || typeof data !== "object") continue;
+      // Search can match loosely; keep only decks by the user asked for.
+      const author = (data.createdByUser && data.createdByUser.userName) || (data.authors && data.authors[0] && data.authors[0].userName);
+      if (user && author && author.toLowerCase() !== user.toLowerCase()) continue;
+      const deck = fromMoxfield(data);
+      if (!deck.cards.length) {
+        failed.push(deck.name || "?");
+        continue;
+      }
+      const pair = (c) => [c.q, c.n];
+      const cmd = new Set(deck.commanders.map((n) => n.toLowerCase()));
+      decks.push({
+        id: data.publicId || data.id || undefined,
+        n: deck.name,
+        c: deck.cards.filter((c) => cmd.has(c.n.toLowerCase())).map(pair),
+        m: deck.cards.filter((c) => !cmd.has(c.n.toLowerCase())).map(pair),
+      });
+    }
+    return fromSync({ v: 2, user, decks, failed });
+  }
+
   // ---------- Scryfall ----------
 
   function summarize(c) {
@@ -487,6 +534,6 @@
     return ["W", "U", "B", "R", "G"].filter((x) => all.has(x)).join("");
   }
 
-  CT.Decks = { parseList, normalizeName, cardKey, fromSync, syncUser, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
+  CT.Decks = { parseList, normalizeName, cardKey, fromSync, syncUser, fromShortcutText, SHORTCUT_SEP, replaceName, suggest, toText, fingerprint, moxfieldId, fromMoxfield, importMoxfield, bookmarklet, fromFragment, fetchCards, autocomplete, lookupCard, analyze, estimate, colorsOf, COMBOS };
   if (typeof module !== "undefined") module.exports = CT.Decks;
 })(typeof window !== "undefined" ? window : globalThis);

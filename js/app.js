@@ -652,6 +652,7 @@
       </section>
       <section><h2>${t("decks")}</h2>
         <div class="inline"><input value="${esc(p.moxfieldUser || "")}" placeholder="${t("moxUser")}" data-change="pMox" autocomplete="off" autocapitalize="off"><button class="btn" data-action="${NATIVE ? "moxSync" : "moxHelp"}" data-id="${p.id}">🔄 ${t("syncFromMox")}</button></div>
+        ${!NATIVE && detectDevice() === "ios" ? `<button class="btn" data-action="shortcutPaste" data-id="${p.id}">📋 ${t("scPaste")}</button>` : ""}
         ${decks
           .map(
             (d) =>
@@ -797,10 +798,75 @@
         .join("")}</div>
       ${iosHome ? `<p class="warn">${t("help_t3")}</p>` : ""}
       ${device === "android" ? `<p class="okmsg">📱 ${t("getAppPitch")} <a class="btn small primary" href="${APK_URL}">${t("getApp")}</a></p>` : ""}
-      ${way1}${way2}
+      ${device === "ios" ? shortcutHelp(playerId) : ""}${way1}${way2}
       <section class="help-way"><h3>🛟 ${t("help_trouble")}</h3><ul class="howto">${li([t("help_t1"), t("help_t2"), ...(device === "ios" && !iosHome ? [t("help_t3")] : [])])}</ul></section>
       <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`
     );
+  }
+
+  function shortcutHelp(playerId) {
+    const get = SHORTCUT_URL
+      ? `<a class="btn small primary" href="${esc(SHORTCUT_URL)}" target="_blank" rel="noopener">⬇ ${t("scGet")}</a>`
+      : `<span class="muted">${t("scNotYet")}</span> <button class="linkish" data-action="shortcutBuild">${t("scHowBuild")}</button>`;
+    return `<section class="help-way"><h3>⭐ ${t("scWay")}</h3>
+      <ol class="howto"><li>${t("scUse1")} ${get}</li><li>${t("scUse2")}</li><li>${t("scUse3")}</li><li>${t("scUse4")} ${
+      playerId ? `<button class="btn small primary" data-action="shortcutPaste" data-id="${esc(playerId)}">📋 ${t("scPaste")}</button>` : ""
+    }</li></ol></section>`;
+  }
+
+  // Exact steps for building the Shortcut (English: the person building it
+  // matches these names against the Shortcuts app).
+  function shortcutBuildModal() {
+    const urlA = "https://api2.moxfield.com/v2/decks/search?authorUserNames=";
+    const urlB = "&pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending";
+    const urlC = "https://api2.moxfield.com/v3/decks/all/";
+    const copy = (text) => `<button class="btn small" data-action="copyText" data-text="${esc(text)}">📋 ${esc(text.length > 28 ? text.slice(0, 26) + "…" : text)}</button>`;
+    const steps = [
+      `Open the <b>Shortcuts</b> app → <b>+</b>. Name the shortcut <b>Moxfield → Commander Tracker</b>.`,
+      `Add <b>Ask for Input</b>. Input type: <b>Text</b>. Prompt: <i>Moxfield username</i>.`,
+      `Add <b>URL</b>. Type ${copy(urlA)}, then insert the <b>Provided Input</b> variable, then ${copy(urlB)}.`,
+      `Add <b>Get Contents of URL</b>. Tap <b>Show More</b> → <b>Headers</b> → add Key <code>Accept</code>, Value <code>application/json</code>.`,
+      `Add <b>Get Dictionary Value</b>: get <b>Value</b> for key ${copy("data")} in <b>Contents of URL</b>.`,
+      `Add <b>Text</b> with ${copy("CT-MOXFIELD-1 ")} followed by the <b>Provided Input</b> variable. Then add <b>Add to Variable</b>, variable name ${copy("Export")}.`,
+      `Add <b>Repeat with Each</b>, repeating over <b>Dictionary Value</b>. Inside the repeat, add in this order:
+        <ol type="a">
+          <li><b>Get Dictionary Value</b>: <b>Value</b> for key ${copy("publicId")} in <b>Repeat Item</b>.</li>
+          <li><b>URL</b>: ${copy(urlC)} then insert the <b>Dictionary Value</b> variable.</li>
+          <li><b>Get Contents of URL</b>, with the same <code>Accept: application/json</code> header.</li>
+          <li><b>Get Text from Input</b> (input: <b>Contents of URL</b>).</li>
+          <li><b>Add to Variable</b>: <b>Export</b>.</li>
+          <li><b>Wait</b>: 1 second.</li>
+        </ol>`,
+      `After <b>End Repeat</b>, add <b>Combine Text</b>: combine <b>Export</b> with <b>Custom</b> separator ${copy(Decks.SHORTCUT_SEP)}.`,
+      `Add <b>Copy to Clipboard</b> (<b>Combined Text</b>).`,
+      `Add <b>Show Notification</b>: <i>Copied! Open Commander Tracker → your player → Paste decks from the Shortcut.</i>`,
+      `Run it once with your username. Tap <b>Allow</b> when it asks to connect to api2.moxfield.com. Then in the app: your player → <b>📋 Paste decks from the Shortcut</b>.`,
+      `Share it: on the shortcut, <b>⋯</b> → <b>Share</b> → <b>Copy iCloud Link</b>. Send the link to the group, and to whoever maintains the app so it can go in as the "Get the Shortcut" button.`,
+    ];
+    openModal(
+      `<h2>🛠 ${t("scHowBuild")}</h2>
+      <p class="muted small">${t("scBuildIntro")}</p>
+      <ol class="howto build-steps">${steps.map((x) => `<li>${x}</li>`).join("")}</ol>
+      <div class="actions"><button class="btn primary" data-action="closeModal">${t("close")}</button></div>`
+    );
+  }
+
+  function shortcutPasteModal(playerId) {
+    openModal(
+      `<h2>📋 ${t("scPaste")}</h2>
+      <p class="muted small">${t("scPasteManual")}</p>
+      <textarea id="scText" rows="6" placeholder="CT-MOXFIELD-1 …"></textarea>
+      <div class="actions"><button class="btn" data-action="closeModal">${t("cancel")}</button><button class="btn primary" data-action="shortcutImport" data-id="${esc(playerId || "")}">${t("import")}</button></div>`,
+      "small"
+    );
+  }
+
+  function takeShortcutText(text, playerId) {
+    const got = Decks.fromShortcutText(text);
+    if (!got) return false;
+    Usage.track("moxfield:shortcut");
+    openSync(got, playerId);
+    return true;
   }
 
   function moxSteps(d) {
@@ -831,6 +897,8 @@
   // other people (share links, the bookmark) must point to the web app.
   const WEB_URL = "https://net13200.github.io/MTG-Commander-Helper/";
   const APK_URL = "https://github.com/net13200/MTG-Commander-Helper/releases/latest/download/commander-tracker.apk";
+  // iCloud link of the shared iPhone Shortcut, once someone has built it.
+  const SHORTCUT_URL = "";
   const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
   function appUrl() {
@@ -889,9 +957,12 @@
     openSync(got);
   });
 
-  function openSync(got) {
+  function openSync(got, ownerId) {
     const owner =
-      S.players.find((p) => !p.guest && got.user && (p.moxfieldUser || "").toLowerCase() === got.user.toLowerCase()) || S.players.find((p) => !p.guest) || null;
+      (ownerId && Store.player(ownerId)) ||
+      S.players.find((p) => !p.guest && got.user && (p.moxfieldUser || "").toLowerCase() === got.user.toLowerCase()) ||
+      S.players.find((p) => !p.guest) ||
+      null;
     const remembered = owner && owner.moxfieldSelected;
     ui.sync = {
       user: got.user,
@@ -2273,6 +2344,29 @@
       Share.decode(m[1])
         .then(offerShare)
         .catch(() => toast(t("importFailed")));
+    },
+    shortcutBuild: () => shortcutBuildModal(),
+    shortcutPaste: async (el) => {
+      const playerId = el.dataset.id;
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (e) {
+        text = "";
+      }
+      if (!takeShortcutText(text, playerId)) shortcutPasteModal(playerId);
+    },
+    shortcutImport: (el) => {
+      const box = $("#scText");
+      if (!takeShortcutText(box ? box.value : "", el.dataset.id)) toast(t("scNothing"));
+    },
+    copyText: async (el) => {
+      try {
+        await navigator.clipboard.writeText(el.dataset.text);
+        toast(t("copied"));
+      } catch (e) {
+        toast(el.dataset.text);
+      }
     },
     moxHelp: (el) => {
       ui.help = { device: detectDevice(), playerId: (el && el.dataset.id) || (ui.view === "player" ? ui.params.id : null) };

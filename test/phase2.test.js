@@ -252,3 +252,17 @@ test("username sync reads every page, then each deck, and reports failures", asy
   await assert.rejects(Decks.syncUser("nati"), /blocked/);
   delete global.fetch;
 });
+
+test("reads the iPhone Shortcut's copied text", () => {
+  const deck = (id, name, author, cmd) =>
+    JSON.stringify({ publicId: id, name, createdByUser: { userName: author }, boards: { commanders: { cards: { a: { quantity: 1, card: { name: cmd } } } }, mainboard: { cards: { b: { quantity: 30, card: { name: "Forest" } } } } } });
+  const text = ["CT-MOXFIELD-1 Salbucha", deck("d1", "Lumra Lands", "Salbucha", "Lumra, Bellow of the Woods"), deck("d2", "Not mine", "someoneelse", "X"), "{broken", deck("d3", "Doctor", "salbucha", "The Tenth Doctor")].join("\n@@CT@@\n");
+  const got = Decks.fromShortcutText(text);
+  assert.equal(got.user, "Salbucha");
+  assert.deepEqual(got.decks.map((d) => d.name), ["Lumra Lands", "Doctor"]);
+  assert.deepEqual(got.decks[0].commanders, ["Lumra, Bellow of the Woods"]);
+  assert.equal(got.decks[0].cards.find((c) => c.n === "Forest").q, 30);
+  assert.equal(got.decks[1].source.url, "https://moxfield.com/decks/d3");
+  assert.deepEqual(got.failed, ["?"]);
+  assert.equal(Decks.fromShortcutText("hello"), null);
+});

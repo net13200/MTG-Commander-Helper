@@ -520,3 +520,7 @@ body.turned { overflow: hidden; }
 .cmdhit { position: relative; }
 .cmdhit .dealer { position: absolute; left: 1.2em; bottom: -2px; font-style: normal; }
 .cmdhit .dealer .avatar { width: 1.1em; height: 1.1em; font-size: 0.6em; box-shadow: 0 0 0 1px #000; }
+.build-steps li { margin-bottom: 4px; }
+.build-steps ol { margin: 6px 0 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; }
+.build-steps code { font-size: 0.85em; padding: 1px 4px; border-radius: 4px; background: var(--surface); }
+.build-steps .btn.small { min-height: 28px; padding: 2px 8px; font-size: 0.8rem; vertical-align: middle; }
