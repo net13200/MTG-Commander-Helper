@@ -279,13 +279,14 @@
     const parts = String(text || "").split(SHORTCUT_SEP).map((x) => x.trim()).filter(Boolean);
     if (!parts.length) return null;
     let user = null;
-    const head = parts[0].match(/^CT-MOXFIELD-1\s+(.+)$/);
+    const head = parts[0].match(/^CT-MOXFIELD-1\b\s*(.*)$/);
     if (head) {
-      user = head[1].trim().slice(0, 60);
+      user = head[1].trim().slice(0, 60) || null;
       parts.shift();
     }
     const decks = [];
     const failed = [];
+    let listOnly = 0;
     for (const part of parts) {
       let data;
       try {
@@ -298,6 +299,12 @@
       // Search can match loosely; keep only decks by the user asked for.
       const author = (data.createdByUser && data.createdByUser.userName) || (data.authors && data.authors[0] && data.authors[0].userName);
       if (user && author && author.toLowerCase() !== user.toLowerCase()) continue;
+      // A deck-search entry (no card lists): the Shortcut's loop didn't
+      // fetch the decks themselves.
+      if (data.publicId && !data.boards && !data.mainboard) {
+        listOnly++;
+        continue;
+      }
       const deck = fromMoxfield(data);
       if (!deck.cards.length) {
         failed.push(deck.name || "?");
@@ -312,6 +319,7 @@
         m: deck.cards.filter((c) => !cmd.has(c.n.toLowerCase())).map(pair),
       });
     }
+    if (!decks.length && listOnly) return { error: "listOnly", count: listOnly };
     return fromSync({ v: 2, user, decks, failed });
   }
 

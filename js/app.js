@@ -861,6 +861,10 @@
   function takeShortcutText(text, playerId) {
     const got = Decks.fromShortcutText(text);
     if (!got) return false;
+    if (got.error === "listOnly") {
+      toast(esc(I18n.fmt("scListOnly", { n: got.count })));
+      return true;
+    }
     Usage.track("moxfield:shortcut");
     openSync(got, playerId);
     return true;

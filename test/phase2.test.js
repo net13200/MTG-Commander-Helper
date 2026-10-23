@@ -265,4 +265,12 @@ test("reads the iPhone Shortcut's copied text", () => {
   assert.equal(got.decks[1].source.url, "https://moxfield.com/decks/d3");
   assert.deepEqual(got.failed, ["?"]);
   assert.equal(Decks.fromShortcutText("hello"), null);
+
+  // Real output from a Shortcut whose loop copied the search entries instead
+  // of the decks, with an empty username header.
+  const entry = (id) => JSON.stringify({ id: "x", publicId: id, name: "Deck", createdByUser: { userName: "sugisan" }, mainboardCount: 100, commanders: [] });
+  const bad = ["CT-MOXFIELD-1 ", entry("a"), entry("b"), "all", "all"].join("@@CT@@");
+  assert.deepEqual(Decks.fromShortcutText(bad), { error: "listOnly", count: 2 });
+  const noUser = ["CT-MOXFIELD-1", deck("d1", "Lumra Lands", "Salbucha", "Lumra, Bellow of the Woods")].join("@@CT@@");
+  assert.equal(Decks.fromShortcutText(noUser).decks.length, 1);
 });
