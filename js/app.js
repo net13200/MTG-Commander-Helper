@@ -824,14 +824,14 @@
     const steps = [
       `Open the <b>Shortcuts</b> app → <b>+</b>. Name the shortcut <b>Moxfield → Commander Tracker</b>.`,
       `Add <b>Ask for Input</b>. Input type: <b>Text</b>. Prompt: <i>Moxfield username</i>.`,
-      `Add <b>URL</b>. Paste ${copy(urlA)} and, right after it in the same box, insert the <b>Provided Input</b> variable. Nothing comes after the variable.`,
-      `Add <b>Get Contents of URL</b>. Tap <b>Show More</b> → <b>Headers</b> → add Key <code>Accept</code>, Value <code>application/json</code>.`,
+      `Add a <b>Text</b> action (not URL: its separate boxes break the address). Paste ${copy(urlA)} and, right after it on the same line, insert the <b>Ask for Input</b> variable (called <b>Provided Input</b> on older iPhones).`,
+      `Add <b>Get Contents of URL</b> (it takes the <b>Text</b> above). Tap <b>Show More</b> → <b>Headers</b> → add Key <code>Accept</code>, Value <code>application/json</code>.`,
       `Add <b>Get Dictionary Value</b>: get <b>Value</b> for key ${copy("data")} in <b>Contents of URL</b>.`,
-      `Add <b>Text</b> with ${copy("CT-MOXFIELD-1 ")} followed by the <b>Provided Input</b> variable. Then add <b>Add to Variable</b>, variable name ${copy("Export")}.`,
+      `Add <b>Text</b> with ${copy("CT-MOXFIELD-1 ")} followed by the <b>Ask for Input</b> variable. Then add <b>Add to Variable</b>, variable name ${copy("Export")}.`,
       `Add <b>Repeat with Each</b>, repeating over <b>Dictionary Value</b>. Inside the repeat, add in this order:
         <ol type="a">
           <li><b>Get Dictionary Value</b>: <b>Value</b> for key ${copy("publicId")} in <b>Repeat Item</b>.</li>
-          <li><b>URL</b>: ${copy(urlC)} then insert the <b>Dictionary Value</b> variable.</li>
+          <li><b>Text</b>: ${copy(urlC)} then, on the same line, insert the <b>Dictionary Value</b> variable.</li>
           <li><b>Get Contents of URL</b>, with the same <code>Accept: application/json</code> header.</li>
           <li><b>Get Text from Input</b> (input: <b>Contents of URL</b>).</li>
           <li><b>Add to Variable</b>: <b>Export</b>.</li>

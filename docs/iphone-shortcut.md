@@ -10,13 +10,13 @@ Action names are as in the English Shortcuts app.
 
 1. **Shortcuts** app → **+**. Name it **Moxfield → Commander Tracker**.
 2. **Ask for Input**: input type **Text**, prompt *Moxfield username*.
-3. **URL**: `https://api2.moxfield.com/v2/decks/search?pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending&authorUserNames=` and, in the same box right after it, the **Provided Input** variable (nothing after it).
+3. **Text** (not **URL**, whose separate boxes split the address): `https://api2.moxfield.com/v2/decks/search?pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending&authorUserNames=` and, in the same box right after it, the **Ask for Input** variable (called **Provided Input** on older iOS).
 4. **Get Contents of URL**: Show More → Headers → `Accept` = `application/json`.
 5. **Get Dictionary Value**: Value for key `data` in **Contents of URL**.
-6. **Text**: `CT-MOXFIELD-1 ` + **Provided Input**. Then **Add to Variable** `Export`.
+6. **Text**: `CT-MOXFIELD-1 ` + **Ask for Input**. Then **Add to Variable** `Export`.
 7. **Repeat with Each** over **Dictionary Value**, and inside:
    1. **Get Dictionary Value**: Value for key `publicId` in **Repeat Item**.
-   2. **URL**: `https://api2.moxfield.com/v3/decks/all/` + **Dictionary Value**.
+   2. **Text**: `https://api2.moxfield.com/v3/decks/all/` + **Dictionary Value**, on one line.
    3. **Get Contents of URL** with the same `Accept: application/json` header.
    4. **Get Text from Input** (input: **Contents of URL**).
    5. **Add to Variable** `Export`.
