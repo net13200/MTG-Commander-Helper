@@ -817,14 +817,14 @@
   // Exact steps for building the Shortcut (English: the person building it
   // matches these names against the Shortcuts app).
   function shortcutBuildModal() {
-    const urlA = "https://api2.moxfield.com/v2/decks/search?authorUserNames=";
-    const urlB = "&pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending";
+    // Username last: nothing has to be typed after the variable.
+    const urlA = "https://api2.moxfield.com/v2/decks/search?pageNumber=1&pageSize=100&sortType=updated&sortDirection=descending&authorUserNames=";
     const urlC = "https://api2.moxfield.com/v3/decks/all/";
     const copy = (text) => `<button class="btn small" data-action="copyText" data-text="${esc(text)}">📋 ${esc(text.length > 28 ? text.slice(0, 26) + "…" : text)}</button>`;
     const steps = [
       `Open the <b>Shortcuts</b> app → <b>+</b>. Name the shortcut <b>Moxfield → Commander Tracker</b>.`,
       `Add <b>Ask for Input</b>. Input type: <b>Text</b>. Prompt: <i>Moxfield username</i>.`,
-      `Add <b>URL</b>. Type ${copy(urlA)}, then insert the <b>Provided Input</b> variable, then ${copy(urlB)}.`,
+      `Add <b>URL</b>. Paste ${copy(urlA)} and, right after it in the same box, insert the <b>Provided Input</b> variable. Nothing comes after the variable.`,
       `Add <b>Get Contents of URL</b>. Tap <b>Show More</b> → <b>Headers</b> → add Key <code>Accept</code>, Value <code>application/json</code>.`,
       `Add <b>Get Dictionary Value</b>: get <b>Value</b> for key ${copy("data")} in <b>Contents of URL</b>.`,
       `Add <b>Text</b> with ${copy("CT-MOXFIELD-1 ")} followed by the <b>Provided Input</b> variable. Then add <b>Add to Variable</b>, variable name ${copy("Export")}.`,
